@@ -1,0 +1,15 @@
+# 构建产物（dist 里的 exe 单独保留，方便直接下载）
+out/*
+!out/.gitkeep
+
+# 临时与测试文件
+*.bmp
+*.log
+.tmp/
+
+# 发布用 bundle 不进仓库
+*.bundle
+
+# Python 缓存
+__pycache__/
+*.pyc

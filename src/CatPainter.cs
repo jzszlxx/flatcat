@@ -1,0 +1,465 @@
+// FlatCat - 矢量猫与气泡绘制（毛色 / 斑纹 / 异瞳 / 配饰）
+// Copyright (c) 2026 认知觉醒能量站 (微信公众号同名)。MIT License，见 LICENSE。
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+
+namespace FlatCat
+{
+    internal static class CatPainter
+    {
+        public const float Design = 320f;
+
+        /// <summary>
+        /// 气泡额外占用的顶部高度。猫头顶上方本来就有约 62px 留白，
+        /// 气泡直接画在留白里，所以这里保持 0，窗口高度仍等于 Design。
+        /// </summary>
+        public const float BubbleH = 0f;
+
+        public const float HeadCx = 160f;
+        public const float HeadCy = 112f;
+        public const float HeadR = 62f;
+
+        private static readonly Color KbBase = Color.FromArgb(46, 42, 38);
+        private static readonly Color KbKey = Color.FromArgb(216, 205, 182);
+        private static readonly Color KbAccent = Color.FromArgb(206, 126, 58);
+        private static readonly Color Ink = Color.FromArgb(38, 34, 32);
+
+        /// <summary>兼容旧调用：无配饰、显示斑纹、不异瞳。</summary>
+        public static void Draw(Graphics g, CatAnim a, bool showKeyboard, Coat coat)
+        {
+            Draw(g, a, showKeyboard, coat, 0, true, false);
+        }
+
+        public static void Draw(Graphics g, CatAnim a, bool showKeyboard, Coat coat,
+                                int accessory, bool showSpots, bool heterochromia)
+        {
+            if (coat == null) coat = Coats.All[0];
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            float dip = a.BodyDip * 4f;
+
+            DrawShadow(g, dip, showKeyboard);
+            DrawTail(g, a, coat, showSpots);
+            DrawBody(g, a, dip, coat, showSpots);
+            if (showKeyboard) DrawKeyboard(g);
+            DrawFrontLegs(g, a, dip, coat);
+            DrawHead(g, a, dip, coat, heterochromia, accessory);
+            DrawNeckAccessory(g, accessory, dip);
+        }
+
+        /// <summary>猫头顶的对话气泡：显示倒计时、按键名或提醒文案。坐标在设计空间，y=0 起。</summary>
+        public static void DrawBubble(Graphics g, string text, float t, bool alert)
+        {
+            DrawBubble(g, text, t, alert, 19f);
+        }
+
+        public static void DrawBubble(Graphics g, string text, float t, bool alert, float fontSize)
+        {
+            if (text == null || text.Length == 0) return;
+
+            using (Font font = new Font("Microsoft YaHei", fontSize, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (StringFormat sf = new StringFormat())
+            {
+                sf.Alignment = StringAlignment.Center;
+                sf.LineAlignment = StringAlignment.Center;
+                sf.FormatFlags = StringFormatFlags.NoWrap;
+
+                SizeF measured = g.MeasureString(text, font, 1000, sf);
+                float w = measured.Width + 28f;
+                float minW = fontSize > 16f ? 108f : 72f;
+                if (w < minW) w = minW;
+                if (w > 268f) w = 268f;
+                float h = fontSize > 16f ? 44f : 38f;
+
+                float bob = (float)Math.Sin(t * 2.6) * 2f;
+                float x = 160f - w / 2f;
+                float y = (fontSize > 16f ? 4f : 12f) + bob;
+
+                Color fill = alert ? Color.FromArgb(250, 232, 216) : Color.FromArgb(250, 255, 255, 251);
+                Color edge = alert ? Color.FromArgb(206, 124, 78) : Color.FromArgb(210, 200, 184);
+                Color inkColor = alert ? Color.FromArgb(146, 68, 28) : Color.FromArgb(58, 53, 46);
+
+                using (GraphicsPath body = RoundRect(new RectangleF(x, y, w, h), 14f))
+                {
+                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, body);
+                    using (Pen p = new Pen(edge, 1.6f)) g.DrawPath(p, body);
+                }
+
+                PointF[] tail = new PointF[]
+                {
+                    new PointF(151f, y + h - 1f),
+                    new PointF(169f, y + h - 1f),
+                    new PointF(160f, y + h + 9f)
+                };
+                using (GraphicsPath tp = new GraphicsPath())
+                {
+                    tp.AddPolygon(tail);
+                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, tp);
+                }
+                using (Pen p = new Pen(edge, 1.6f))
+                {
+                    p.StartCap = LineCap.Round;
+                    p.EndCap = LineCap.Round;
+                    g.DrawLine(p, tail[0], tail[2]);
+                    g.DrawLine(p, tail[2], tail[1]);
+                }
+
+                using (SolidBrush b = new SolidBrush(inkColor))
+                    g.DrawString(text, font, b, new RectangleF(x, y, w, h), sf);
+            }
+        }
+
+        private static void DrawShadow(Graphics g, float dip, bool keyboard)
+        {
+            float y = keyboard ? 300f : 272f;
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                p.AddEllipse(88, y + dip * 0.4f, 144, 16);
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(26, 70, 56, 42)))
+                    g.FillPath(b, p);
+            }
+        }
+
+        private static void DrawTail(Graphics g, CatAnim a, Coat coat, bool spots)
+        {
+            GraphicsState st = g.Save();
+            g.TranslateTransform(206, 244);
+            g.RotateTransform(a.TailAngle);
+            using (Pen pen = new Pen(coat.Fur, 17f))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                pen.LineJoin = LineJoin.Round;
+                using (GraphicsPath p = new GraphicsPath())
+                {
+                    p.AddBezier(0, 0, 14, -8, 40, -20, 54, -56);
+                    g.DrawPath(pen, p);
+                }
+            }
+            if (spots)
+            {
+                using (Pen pen = new Pen(coat.FurDark, 6f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawLine(pen, 26, -14, 33, -24);
+                    g.DrawLine(pen, 42, -30, 48, -42);
+                }
+            }
+            g.Restore(st);
+        }
+
+        private static void DrawBody(Graphics g, CatAnim a, float dip, Coat coat, bool spots)
+        {
+            GraphicsState st = g.Save();
+            g.TranslateTransform(0, dip);
+
+            FillEllipse(g, coat.Fur, 102, 220, 60, 54);
+            FillEllipse(g, coat.Fur, 158, 220, 60, 54);
+
+            using (GraphicsPath body = new GraphicsPath())
+            {
+                body.AddBezier(160, 142, 120, 142, 98, 170, 98, 208);
+                body.AddBezier(98, 208, 98, 250, 118, 266, 160, 266);
+                body.AddBezier(160, 266, 202, 266, 222, 250, 222, 208);
+                body.AddBezier(222, 208, 222, 170, 200, 142, 160, 142);
+                body.CloseFigure();
+                using (SolidBrush b = new SolidBrush(coat.Fur)) g.FillPath(b, body);
+
+                if (spots)
+                {
+                    g.SetClip(body);
+                    using (Pen pen = new Pen(coat.FurDark, 7f))
+                    {
+                        pen.StartCap = LineCap.Round;
+                        pen.EndCap = LineCap.Round;
+                        g.DrawBezier(pen, 106, 190, 120, 198, 126, 212, 124, 228);
+                        g.DrawBezier(pen, 214, 190, 200, 198, 194, 212, 196, 228);
+                    }
+                    g.ResetClip();
+                }
+            }
+
+            using (GraphicsPath bib = new GraphicsPath())
+            {
+                bib.AddEllipse(138, 148, 44, 42);
+                using (SolidBrush b = new SolidBrush(coat.Light))
+                    g.FillPath(b, bib);
+            }
+            g.Restore(st);
+        }
+
+        private static void DrawKeyboard(Graphics g)
+        {
+            RectangleF kb = new RectangleF(52, 262, 216, 40);
+            using (GraphicsPath p = RoundRect(kb, 8f))
+            using (SolidBrush b = new SolidBrush(KbBase))
+                g.FillPath(b, p);
+
+            float x0 = 60f, y0 = 268f;
+            int cols = 12, rows = 2;
+            float kw = 13.5f, kh = 7.5f, gap = 2.4f;
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < cols; c++)
+                {
+                    bool accent = (r == 0 && c == 0) || (r == 1 && c == cols - 1);
+                    using (SolidBrush b = new SolidBrush(accent ? KbAccent : KbKey))
+                        g.FillRectangle(b, x0 + c * (kw + gap), y0 + r * (kh + gap), kw, kh);
+                }
+            }
+            using (SolidBrush b = new SolidBrush(KbKey))
+                g.FillRectangle(b, x0 + 3 * (kw + gap), y0 + 2 * (kh + gap), kw * 5, kh);
+        }
+
+        private static void DrawFrontLegs(Graphics g, CatAnim a, float dip, Coat coat)
+        {
+            DrawFrontLeg(g, 118f, 192f + dip, a.LeftPaw, coat);
+            DrawFrontLeg(g, 174f, 192f + dip, a.RightPaw, coat);
+        }
+
+        private static void DrawFrontLeg(Graphics g, float x, float y, float lift, Coat coat)
+        {
+            GraphicsState st = g.Save();
+            g.TranslateTransform(x, y);
+            g.TranslateTransform(0, -16f * lift);
+            g.RotateTransform(-8f * lift);
+
+            using (GraphicsPath p = RoundRect(new RectangleF(0, 0, 28, 58), 13f))
+            using (SolidBrush b = new SolidBrush(coat.Fur))
+                g.FillPath(b, p);
+
+            using (GraphicsPath paw = new GraphicsPath())
+            {
+                paw.AddEllipse(-3, 44, 34, 20);
+                using (SolidBrush b = new SolidBrush(coat.Light)) g.FillPath(b, paw);
+            }
+            using (Pen pen = new Pen(Color.FromArgb(60, coat.FurDark), 1.5f))
+            {
+                g.DrawLine(pen, 7, 58, 7, 62);
+                g.DrawLine(pen, 14, 59, 14, 63);
+                g.DrawLine(pen, 21, 58, 21, 62);
+            }
+            g.Restore(st);
+        }
+
+        private static void DrawHead(Graphics g, CatAnim a, float dip, Coat coat, bool hetero, int accessory)
+        {
+            GraphicsState st = g.Save();
+            g.TranslateTransform(HeadCx, HeadCy + dip * 3.2f);
+            g.RotateTransform(a.HeadTilt);
+
+            DrawEar(g, -1f, a.EarTwitch, coat);
+            DrawEar(g, 1f, a.EarTwitch, coat);
+
+            using (SolidBrush b = new SolidBrush(coat.Fur))
+                g.FillEllipse(b, -56, -50, 112, 102);
+
+            using (Pen pen = new Pen(coat.FurDark, 5f))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawLine(pen, -10, -45, -10, -28);
+                g.DrawLine(pen, 0, -48, 0, -29);
+                g.DrawLine(pen, 10, -45, 10, -28);
+            }
+
+            using (SolidBrush b = new SolidBrush(coat.Light))
+                g.FillEllipse(b, -21, 10, 42, 30);
+
+            Color odd = OddEyeColor(coat.Eye);
+            DrawEye(g, a, -1, coat, coat.Eye);
+            DrawEye(g, a, 1, coat, hetero ? odd : coat.Eye);
+
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                p.AddPolygon(new PointF[] { new PointF(-6.5f, 16f), new PointF(6.5f, 16f), new PointF(0f, 24f) });
+                using (SolidBrush b = new SolidBrush(coat.Pink)) g.FillPath(b, p);
+            }
+
+            using (Pen pen = new Pen(Ink, 1.7f))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawLine(pen, 0, 24, 0, 27);
+                g.DrawArc(pen, -9, 25, 9, 7, 0, 180);
+                g.DrawArc(pen, 0, 25, 9, 7, 0, 180);
+            }
+
+            using (Pen pen = new Pen(Color.FromArgb(80, Ink), 1.5f))
+            {
+                pen.StartCap = LineCap.Round;
+                g.DrawLine(pen, -23, 18, -40, 14);
+                g.DrawLine(pen, -23, 23, -41, 24);
+                g.DrawLine(pen, 23, 18, 40, 14);
+                g.DrawLine(pen, 23, 23, 41, 24);
+            }
+
+            if (accessory == 4) DrawGlasses(g);
+            g.Restore(st);
+        }
+
+        /// <summary>异瞳色：原色偏蓝就换成金色，否则换成蓝色，保证两只眼明显不同。</summary>
+        private static Color OddEyeColor(Color baseColor)
+        {
+            if (baseColor.B > baseColor.G + 12) return Color.FromArgb(201, 162, 39);
+            return Color.FromArgb(90, 160, 208);
+        }
+
+        private static void DrawGlasses(Graphics g)
+        {
+            using (Pen frame = new Pen(Color.FromArgb(58, 50, 44), 2.6f))
+            using (Pen leg = new Pen(Color.FromArgb(58, 50, 44), 2.0f))
+            {
+                g.DrawEllipse(frame, -24f - 15f, -3f - 15f, 30f, 30f);
+                g.DrawEllipse(frame, 24f - 15f, -3f - 15f, 30f, 30f);
+                g.DrawLine(leg, -9f, -3f, 9f, -3f);
+                g.DrawLine(leg, -39f, -4f, -52f, -9f);
+                g.DrawLine(leg, 39f, -4f, 52f, -9f);
+            }
+        }
+
+        /// <summary>脖子上的配饰：1 铃铛 / 2 围巾 / 3 蝴蝶结（4 眼镜在头部内绘制）。</summary>
+        private static void DrawNeckAccessory(Graphics g, int accessory, float dip)
+        {
+            if (accessory == 1)
+            {
+                float cy = 170f + dip * 2f;
+                using (SolidBrush ring = new SolidBrush(Color.FromArgb(196, 152, 62)))
+                    g.FillEllipse(ring, 150f, cy - 14f, 20f, 9f);
+                using (SolidBrush bell = new SolidBrush(Color.FromArgb(232, 181, 74)))
+                    g.FillEllipse(bell, 149f, cy - 6f, 22f, 22f);
+                using (Pen edge = new Pen(Color.FromArgb(178, 132, 48), 1.4f))
+                    g.DrawEllipse(edge, 149f, cy - 6f, 22f, 22f);
+                using (SolidBrush hl = new SolidBrush(Color.FromArgb(248, 232, 178)))
+                    g.FillEllipse(hl, 154f, cy - 1f, 7f, 6f);
+                using (Pen slit = new Pen(Color.FromArgb(150, 110, 40), 1.6f))
+                    g.DrawLine(slit, 155f, cy + 11f, 165f, cy + 11f);
+                using (SolidBrush dot = new SolidBrush(Color.FromArgb(150, 110, 40)))
+                    g.FillEllipse(dot, 158f, cy + 13f, 4f, 4f);
+            }
+            else if (accessory == 2)
+            {
+                using (GraphicsPath scarf = new GraphicsPath())
+                {
+                    scarf.AddBezier(124f, 156f, 138f, 176f, 182f, 176f, 196f, 156f);
+                    scarf.AddLine(196f, 156f, 196f, 170f);
+                    scarf.AddBezier(196f, 170f, 182f, 190f, 138f, 190f, 124f, 170f);
+                    scarf.CloseFigure();
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(196, 86, 63))) g.FillPath(b, scarf);
+                }
+                using (GraphicsPath tail = new GraphicsPath())
+                {
+                    tail.AddPolygon(new PointF[]
+                    {
+                        new PointF(186f, 176f), new PointF(206f, 182f),
+                        new PointF(200f, 214f), new PointF(182f, 206f)
+                    });
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(176, 72, 52))) g.FillPath(b, tail);
+                }
+                using (Pen stitch = new Pen(Color.FromArgb(232, 156, 132), 1.6f))
+                {
+                    g.DrawBezier(stitch, 130f, 162f, 144f, 178f, 176f, 178f, 190f, 162f);
+                }
+            }
+            else if (accessory == 3)
+            {
+                float cy = 168f + dip * 2f;
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(226, 122, 142)))
+                {
+                    GraphicsPath left = new GraphicsPath();
+                    left.AddEllipse(134f, cy - 9f, 24f, 18f);
+                    g.FillPath(b, left);
+                    GraphicsPath right = new GraphicsPath();
+                    right.AddEllipse(162f, cy - 9f, 24f, 18f);
+                    g.FillPath(b, right);
+                }
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(198, 92, 112)))
+                {
+                    g.FillEllipse(b, 153f, cy - 6f, 14f, 12f);
+                }
+                using (Pen line = new Pen(Color.FromArgb(178, 78, 98), 1.2f))
+                {
+                    g.DrawEllipse(line, 134f, cy - 9f, 24f, 18f);
+                    g.DrawEllipse(line, 162f, cy - 9f, 24f, 18f);
+                }
+            }
+        }
+
+        private static void DrawEar(Graphics g, float side, float twitch, Coat coat)
+        {
+            GraphicsState st = g.Save();
+            g.ScaleTransform(side, 1f);
+            g.RotateTransform(-twitch * 6f);
+
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                p.AddPolygon(new PointF[] { new PointF(9, -36), new PointF(30, -80), new PointF(48, -32) });
+                using (SolidBrush b = new SolidBrush(coat.Fur)) g.FillPath(b, p);
+            }
+            using (GraphicsPath inner = new GraphicsPath())
+            {
+                inner.AddPolygon(new PointF[] { new PointF(19, -41), new PointF(30, -67), new PointF(41, -39) });
+                using (SolidBrush b = new SolidBrush(coat.Pink)) g.FillPath(b, inner);
+            }
+            g.Restore(st);
+        }
+
+        private static void DrawEye(Graphics g, CatAnim a, int side, Coat coat, Color eyeColor)
+        {
+            float cx = 24f * side;
+            float cy = -3f;
+            float open = a.EyeOpen;
+            if (open < 0.03f) open = 0.03f;
+            if (open > 1f) open = 1f;
+            float ry = 16f * open;
+
+            using (SolidBrush b = new SolidBrush(eyeColor))
+                g.FillEllipse(b, cx - 14f, cy - ry, 28f, ry * 2f);
+
+            float px = cx + a.PupilX * 4.5f;
+            float py = cy + a.PupilY * 4.5f;
+            float prx = 4.6f;
+            float pry = 9f * open;
+            if (pry < 1.6f) pry = 1.6f;
+            using (SolidBrush b = new SolidBrush(Ink))
+                g.FillEllipse(b, px - prx, py - pry, prx * 2f, pry * 2f);
+
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(235, 255, 255, 250)))
+                g.FillEllipse(b, px - 3.6f, py - pry * 0.72f, 3.4f, 3.4f);
+
+            if (open < 0.22f)
+            {
+                using (Pen pen = new Pen(Ink, 2.2f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawArc(pen, cx - 10f, cy - 7f, 20f, 13f, 200, 140);
+                }
+            }
+        }
+
+        private static void FillEllipse(Graphics g, Color c, float x, float y, float w, float h)
+        {
+            using (SolidBrush b = new SolidBrush(c))
+                g.FillEllipse(b, x, y, w, h);
+        }
+
+        public static GraphicsPath RoundRect(RectangleF r, float radius)
+        {
+            GraphicsPath p = new GraphicsPath();
+            float d = radius * 2f;
+            if (d > r.Width) d = r.Width;
+            if (d > r.Height) d = r.Height;
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+    }
+}
