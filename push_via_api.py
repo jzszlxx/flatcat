@@ -87,7 +87,8 @@ def main():
     default = info.get("default_branch") or "main"
     print("目标仓库：%s（默认分支 %s，当前 size=%s）" % (info["full_name"], default, info.get("size")))
 
-    if (info.get("size") or 0) == 0:
+    code_ref, _ = req("/repos/%s/git/ref/heads/%s" % (repo, default), token)
+    if code_ref == 404:
         # 空仓库不能直接 POST blob（409 Git Repository is empty），先用 Contents API 落一次提交
         seed = base64.b64encode(("# FlatCat" + chr(10) + chr(10) + "正在初始化仓库…" + chr(10)).encode("utf-8")).decode()
         code, seed_res = req("/repos/%s/contents/README.md" % repo, token, "PUT",

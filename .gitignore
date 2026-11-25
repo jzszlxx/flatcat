@@ -1,6 +1,5 @@
 # 构建产物（dist 里的 exe 单独保留，方便直接下载）
-out/*
-!out/.gitkeep
+out/
 
 # 临时与测试文件
 *.bmp
@@ -13,3 +12,6 @@ out/*
 # Python 缓存
 __pycache__/
 *.pyc
+
+# 生成脚本的中间输出
+tools/res/

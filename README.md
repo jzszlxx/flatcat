@@ -6,6 +6,8 @@
 
 技术路线对应 `7paws-桌面宠物复刻方案.html` 里的 **C 方案**：自研 2D 扁平版。
 
+仓库地址：**https://github.com/jzszlxx/-**
+
 ## 运行
 
 解压后双击 `FlatCat.exe` 即可。无需安装、无需 .NET 运行时（用 Windows 自带的 .NET Framework 4.8）。
