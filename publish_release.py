@@ -16,7 +16,7 @@ import urllib.request
 
 API = "https://api.github.com"
 UPLOAD = "https://uploads.github.com"
-DEFAULT_REPO = "jzszlxx/-"
+DEFAULT_REPO = "jzszlxx/flatcat"
 DEFAULT_TAG = "v1.7.0"
 TITLE = "FlatCat 1.7.0 · 金句库可以自己加了，字体字号也能调"
 ASSETS = ["out/FlatCat.exe", "out/FlatCat-1.7.0.zip"]
