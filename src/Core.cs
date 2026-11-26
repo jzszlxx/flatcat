@@ -212,6 +212,16 @@ namespace FlatCat
         [DataMember(Name = "totalPomodoros")] public int TotalPomodoros = 0;
         [DataMember(Name = "alertLog")] public List<string> AlertLog = new List<string>();
 
+        // v1.4 截图与音频
+        [DataMember(Name = "captureHideCat")] public bool CaptureHideCat = false;
+        [DataMember(Name = "captureDir")] public string CaptureDir = "";
+        [DataMember(Name = "captureCopy")] public bool CaptureCopy = true;
+        [DataMember(Name = "radios")] public List<RadioStation> CustomRadios = new List<RadioStation>();
+        [DataMember(Name = "volume")] public int Volume = 70;
+        [DataMember(Name = "musicFolder")] public string MusicFolder = "";
+        /// <summary>v1.4 字段落地标记：老配置文件缺这些字段时，反序列化拿到的是 0/false 而不是初始值。</summary>
+        [DataMember(Name = "v14init")] public bool V14Init = false;
+
         public static string Dir
         {
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlatCat"); }
@@ -234,6 +244,15 @@ namespace FlatCat
                     if (s == null) return new Settings();
                     if (s.Alarms == null) s.Alarms = new List<Alarm>();
                     if (s.AlertLog == null) s.AlertLog = new List<string>();
+                    if (s.CustomRadios == null) s.CustomRadios = new List<RadioStation>();
+                    if (s.CaptureDir == null) s.CaptureDir = "";
+                    if (!s.V14Init)
+                    {
+                        // 老配置文件没有 v1.4 字段：反序列化给的是 0/false，这里补回出厂默认
+                        s.Volume = 70;
+                        s.CaptureCopy = true;
+                        s.V14Init = true;
+                    }
                     return s;
                 }
             }
@@ -301,6 +320,10 @@ namespace FlatCat
             Heterochromia = other.Heterochromia; ClockMode = other.ClockMode;
             TotalPomodoros = other.TotalPomodoros;
             AlertLog = new List<string>(other.AlertLog == null ? new string[0] : other.AlertLog.ToArray());
+            CaptureHideCat = other.CaptureHideCat; CaptureDir = other.CaptureDir;
+            CaptureCopy = other.CaptureCopy;
+            CustomRadios = new List<RadioStation>(other.CustomRadios == null ? new RadioStation[0] : other.CustomRadios.ToArray());
+            Volume = other.Volume; MusicFolder = other.MusicFolder;
         }
     }
     #endregion

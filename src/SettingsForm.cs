@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -58,12 +59,34 @@ namespace FlatCat
         private NumericUpDown _hourlyStart;
         private NumericUpDown _hourlyEnd;
 
+        // 截图
+        private CheckBox _captureHideCat;
+        private CheckBox _captureCopy;
+        private TextBox _captureDir;
+
+        // 媒体
+        private ListBox _radioList;
+        private TextBox _radioName;
+        private TextBox _radioUrl;
+        private TrackBar _volumeBar;
+        private Label _volumeLabel;
+        private ListBox _musicList;
+        private List<string> _musicFiles = new List<string>();
+        private Label _audioStatus;
+
         // 系统
         private CheckBox _autostart;
         private Label _statLabel;
         private ListBox _historyList;
 
         public event EventHandler StartCountdownRequested;
+        public event EventHandler ShotFullRequested;
+        public event EventHandler ShotRectRequested;
+        public event EventHandler ShotLassoRequested;
+        public event Action<RadioStation> RadioPlayRequested;
+        public event EventHandler RadioStopRequested;
+        public event EventHandler MusicPickRequested;
+        public event Action<List<string>, int> MusicPlayRequested;
         public event EventHandler StartFocusRequested;
         public event EventHandler TestAlertRequested;
 
@@ -101,6 +124,8 @@ namespace FlatCat
             _tabs.TabPages.Add(BuildBehaviorPage());
             _tabs.TabPages.Add(BuildReminderPage());
             _tabs.TabPages.Add(BuildSystemPage());
+            _tabs.TabPages.Add(BuildCapturePage());
+            _tabs.TabPages.Add(BuildMediaPage());
 
             Controls.Add(_tabs);
         }
@@ -518,6 +543,243 @@ namespace FlatCat
             return page;
         }
 
+        // ---------------------------------------------------------------- 截图
+        private TabPage BuildCapturePage()
+        {
+            TabPage page = NewPage("截图");
+
+            _captureHideCat = NewCheck("截图时先藏起小猫（不把自己画进图里）", 20, 26, 500);
+            page.Controls.Add(_captureHideCat);
+
+            _captureCopy = NewCheck("截图后同时复制到剪贴板", 20, 60, 400);
+            page.Controls.Add(_captureCopy);
+
+            page.Controls.Add(NewLabel("保存位置", 20, 100));
+            _captureDir = new TextBox();
+            _captureDir.SetBounds(112, 96, 380, 24);
+            page.Controls.Add(_captureDir);
+
+            Button browse = new Button();
+            browse.Text = "选择…";
+            browse.SetBounds(500, 95, 88, 26);
+            browse.Click += delegate
+            {
+                using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+                {
+                    dlg.Description = "选择截图保存目录";
+                    if (Directory.Exists(_captureDir.Text)) dlg.SelectedPath = _captureDir.Text;
+                    if (dlg.ShowDialog(this) == DialogResult.OK) _captureDir.Text = dlg.SelectedPath;
+                }
+            };
+            page.Controls.Add(browse);
+
+            Button resetDir = new Button();
+            resetDir.Text = "恢复默认";
+            resetDir.SetBounds(112, 130, 88, 26);
+            resetDir.Click += delegate { _captureDir.Text = Shot.DefaultDir; };
+            page.Controls.Add(resetDir);
+
+            page.Controls.Add(NewLabel("马上试一下", 20, 176));
+
+            Button full = new Button();
+            full.Text = "全屏";
+            full.SetBounds(112, 172, 96, 30);
+            full.Click += delegate { if (ShotFullRequested != null) ShotFullRequested(this, EventArgs.Empty); };
+            page.Controls.Add(full);
+
+            Button rect = new Button();
+            rect.Text = "矩形选区";
+            rect.SetBounds(216, 172, 96, 30);
+            rect.Click += delegate { if (ShotRectRequested != null) ShotRectRequested(this, EventArgs.Empty); };
+            page.Controls.Add(rect);
+
+            Button lasso = new Button();
+            lasso.Text = "不规则";
+            lasso.SetBounds(320, 172, 96, 30);
+            lasso.Click += delegate { if (ShotLassoRequested != null) ShotLassoRequested(this, EventArgs.Empty); };
+            page.Controls.Add(lasso);
+
+            Label tip = NewLabel("", 20, 222);
+            tip.SetBounds(20, 218, 600, 70);
+            tip.ForeColor = Color.DimGray;
+            tip.Text = "矩形：拖出方框松手；不规则：按住左键沿轮廓描一圈再松手；按 Esc 取消。\r\n" +
+                       "存成 PNG，文件名带时间戳，不会覆盖旧图；默认放在「图片\\FlatCat 截图」。";
+            page.Controls.Add(tip);
+
+            return page;
+        }
+
+        // ---------------------------------------------------------------- 媒体
+        private TabPage BuildMediaPage()
+        {
+            TabPage page = NewPage("媒体");
+
+            page.Controls.Add(NewLabel("电台（预置 + 自定义）", 20, 18));
+
+            _radioList = new ListBox();
+            _radioList.SetBounds(20, 42, 380, 178);
+            _radioList.IntegralHeight = false;
+            page.Controls.Add(_radioList);
+
+            Button playRadio = new Button();
+            playRadio.Text = "播放选中";
+            playRadio.SetBounds(20, 228, 100, 28);
+            playRadio.Click += delegate
+            {
+                RadioStation st = _radioList.SelectedItem as RadioStation;
+                if (st != null && RadioPlayRequested != null) RadioPlayRequested(st);
+            };
+            page.Controls.Add(playRadio);
+
+            Button stopRadio = new Button();
+            stopRadio.Text = "停止";
+            stopRadio.SetBounds(128, 228, 80, 28);
+            stopRadio.Click += delegate { if (RadioStopRequested != null) RadioStopRequested(this, EventArgs.Empty); };
+            page.Controls.Add(stopRadio);
+
+            page.Controls.Add(NewLabel("名称", 416, 42));
+            _radioName = new TextBox();
+            _radioName.SetBounds(416, 62, 200, 24);
+            page.Controls.Add(_radioName);
+
+            page.Controls.Add(NewLabel("流地址", 416, 94));
+            _radioUrl = new TextBox();
+            _radioUrl.SetBounds(416, 114, 200, 24);
+            page.Controls.Add(_radioUrl);
+
+            Button addRadio = new Button();
+            addRadio.Text = "添加电台";
+            addRadio.SetBounds(416, 146, 96, 28);
+            addRadio.Click += delegate { AddRadio(); };
+            page.Controls.Add(addRadio);
+
+            Button delRadio = new Button();
+            delRadio.Text = "删除选中";
+            delRadio.SetBounds(520, 146, 96, 28);
+            delRadio.Click += delegate { DeleteRadio(); };
+            page.Controls.Add(delRadio);
+
+            page.Controls.Add(NewLabel("音量", 416, 184));
+            _volumeBar = new TrackBar();
+            _volumeBar.SetBounds(416, 204, 180, 34);
+            _volumeBar.Minimum = 0;
+            _volumeBar.Maximum = 100;
+            _volumeBar.TickFrequency = 25;
+            _volumeBar.ValueChanged += delegate { _volumeLabel.Text = _volumeBar.Value + "%"; };
+            page.Controls.Add(_volumeBar);
+            _volumeLabel = NewLabel("70%", 600, 190);
+            page.Controls.Add(_volumeLabel);
+
+            page.Controls.Add(NewLabel("本地音乐", 20, 272));
+
+            _musicList = new ListBox();
+            _musicList.SetBounds(20, 296, 380, 132);
+            _musicList.IntegralHeight = false;
+            page.Controls.Add(_musicList);
+
+            Button pickFiles = new Button();
+            pickFiles.Text = "选文件夹…";
+            pickFiles.SetBounds(416, 296, 96, 28);
+            pickFiles.Click += delegate { if (MusicPickRequested != null) MusicPickRequested(this, EventArgs.Empty); };
+            page.Controls.Add(pickFiles);
+
+            Button playMusic = new Button();
+            playMusic.Text = "播放选中";
+            playMusic.SetBounds(520, 296, 96, 28);
+            playMusic.Click += delegate
+            {
+                if (_musicFiles == null || _musicList.SelectedIndex < 0) return;
+                if (MusicPlayRequested != null) MusicPlayRequested(new List<string>(_musicFiles), _musicList.SelectedIndex);
+            };
+            page.Controls.Add(playMusic);
+
+            Label musicTip = NewLabel("", 416, 336);
+            musicTip.SetBounds(416, 334, 210, 60);
+            musicTip.ForeColor = Color.DimGray;
+            musicTip.Text = "支持 mp3 / wav / wma /\r\nm4a / aac / flac，最多\r\n收录 500 首。";
+            page.Controls.Add(musicTip);
+
+            _audioStatus = NewLabel("", 20, 440);
+            _audioStatus.SetBounds(20, 438, 600, 20);
+            _audioStatus.ForeColor = Color.DimGray;
+            page.Controls.Add(_audioStatus);
+
+            return page;
+        }
+
+        private void AddRadio()
+        {
+            string name = _radioName.Text.Trim();
+            string url = _radioUrl.Text.Trim();
+            if (url.Length == 0)
+            {
+                MessageBox.Show(this, "流地址不能为空。", "添加电台", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            Uri parsed;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out parsed))
+            {
+                MessageBox.Show(this, "地址格式不对，应以 http:// 开头。\r\n注意：本程序内置播放器对 https 流可能打不开，建议用 http 流。",
+                    "添加电台", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (name.Length == 0) name = "自定义电台";
+            _work.CustomRadios.Add(new RadioStation(name, url));
+            _radioName.Text = "";
+            _radioUrl.Text = "";
+            RefreshRadios();
+        }
+
+        private void DeleteRadio()
+        {
+            RadioStation st = _radioList.SelectedItem as RadioStation;
+            if (st == null || _work.CustomRadios == null) return;
+            for (int i = 0; i < _work.CustomRadios.Count; i++)
+            {
+                if (_work.CustomRadios[i].Url == st.Url)
+                {
+                    _work.CustomRadios.RemoveAt(i);
+                    break;
+                }
+            }
+            RefreshRadios();
+        }
+
+        private void RefreshRadios()
+        {
+            _radioList.BeginUpdate();
+            _radioList.Items.Clear();
+            List<RadioStation> presets = Radios.Presets();
+            for (int i = 0; i < presets.Count; i++)
+                _radioList.Items.Add(presets[i]);
+            if (_work.CustomRadios != null)
+            {
+                for (int i = 0; i < _work.CustomRadios.Count; i++)
+                    _radioList.Items.Add(_work.CustomRadios[i]);
+            }
+            _radioList.EndUpdate();
+        }
+
+        private void RefreshMusicList()
+        {
+            _musicFiles = AudioPlayer.ScanFolder(_work.MusicFolder);
+            _musicList.BeginUpdate();
+            _musicList.Items.Clear();
+            if (_musicFiles.Count == 0) _musicList.Items.Add("（还没选音乐文件夹）");
+            else
+            {
+                for (int i = 0; i < _musicFiles.Count; i++)
+                    _musicList.Items.Add(Path.GetFileName(_musicFiles[i]));
+            }
+            _musicList.EndUpdate();
+        }
+
+        /// <summary>由主窗口回调，刷新播放状态行。</summary>
+        public void SetAudioStatus(string text)
+        {
+            if (_audioStatus != null) _audioStatus.Text = text;
+        }
+
         private void BuildButtons()
         {
             Button ok = new Button();
@@ -612,6 +874,15 @@ namespace FlatCat
 
             _alarmSound.SelectedIndex = Math.Max(0, Math.Min(2, _work.AlarmSound));
             _autostart.Checked = _work.Autostart;
+
+            _captureHideCat.Checked = _work.CaptureHideCat;
+            _captureCopy.Checked = _work.CaptureCopy;
+            _captureDir.Text = string.IsNullOrEmpty(_work.CaptureDir) ? Shot.DefaultDir : _work.CaptureDir;
+
+            _volumeBar.Value = Math.Max(0, Math.Min(100, _work.Volume));
+            _volumeLabel.Text = _volumeBar.Value + "%";
+            RefreshRadios();
+            RefreshMusicList();
 
             _historyList.BeginUpdate();
             _historyList.Items.Clear();
@@ -748,6 +1019,11 @@ namespace FlatCat
             _work.AlarmSound = Math.Max(0, _alarmSound.SelectedIndex);
 
             _work.Autostart = _autostart.Checked;
+
+            _work.CaptureHideCat = _captureHideCat.Checked;
+            _work.CaptureCopy = _captureCopy.Checked;
+            _work.CaptureDir = _captureDir.Text.Trim();
+            _work.Volume = _volumeBar.Value;
         }
 
         private void Apply()

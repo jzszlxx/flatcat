@@ -15,3 +15,7 @@ __pycache__/
 
 # 生成脚本的中间输出
 tools/res/
+
+# 技术选型用的临时探针与探测结果，不进仓库
+tools/media_probe*
+tools/radio_ok.txt

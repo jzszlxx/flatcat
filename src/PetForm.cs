@@ -28,6 +28,9 @@ namespace FlatCat
         private SettingsForm _settingsForm;
         private System.Media.SoundPlayer _purr;
         private System.Media.SoundPlayer _meow;
+        private AudioPlayer _audio;
+        private bool _shotBusy;
+        private int _tickCount;
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private readonly Random _rand = new Random();
         private double _lastTick;
@@ -107,6 +110,8 @@ namespace FlatCat
             _input.Start();
 
             LoadPurr();
+            _audio = new AudioPlayer();
+            _audio.SetVolume(Math.Max(0, Math.Min(100, _cfg.Volume)) / 100.0);
             EnsureTodayCounter();
             BuildMenu();
             BuildTray();
@@ -483,6 +488,18 @@ namespace FlatCat
             StepAnimation((float)dt);
             RenderFrame();
             UpdateClickThrough();
+            UpdateSettingsStatus();
+        }
+
+        /// <summary>把播放状态回写到设置窗口（每约 1 秒一次，避免频繁刷 UI）。</summary>
+        private void UpdateSettingsStatus()
+        {
+            _tickCount++;
+            if (_settingsForm == null || _settingsForm.IsDisposed) return;
+            if (_tickCount % 30 != 0) return;
+            string txt = _audio == null ? "" : _audio.Status;
+            if (_audio != null && !string.IsNullOrEmpty(_audio.Title)) txt += "  ·  " + _audio.Title;
+            _settingsForm.SetAudioStatus("当前： " + txt);
         }
 
         private void ReadInput()
@@ -818,7 +835,18 @@ namespace FlatCat
             {
                 Alert("这是一条提醒（预览）", _settingsForm.SelectedSound);
             };
-            _settingsForm.FormClosed += delegate { _settingsForm = null; };
+            _settingsForm.ShotFullRequested += delegate { DoShot(ShotMode.FullScreen); };
+            _settingsForm.ShotRectRequested += delegate { DoShot(ShotMode.Rect); };
+            _settingsForm.ShotLassoRequested += delegate { DoShot(ShotMode.Lasso); };
+            _settingsForm.RadioPlayRequested += delegate(RadioStation st) { PlayRadioFromSettings(st); };
+            _settingsForm.RadioStopRequested += delegate { StopAudioFromSettings(); };
+            _settingsForm.MusicPickRequested += delegate { PickMusicFolder(); };
+            _settingsForm.MusicPlayRequested += delegate(List<string> files, int index) { PlayMusicFromSettings(files, index); };
+            _settingsForm.FormClosed += delegate
+            {
+                _settingsForm = null;
+                if (_audio != null) _audio.SetVolume(Math.Max(0, Math.Min(100, _cfg.Volume)) / 100.0);
+            };
             _settingsForm.Show();
         }
 
@@ -854,6 +882,10 @@ namespace FlatCat
             _menu.Items.Add(BuildPomodoroMenu());
             _menu.Items.Add(BuildWaterMenu());
             _menu.Items.Add(BuildReminderMenu());
+            _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(BuildShotMenu());
+            _menu.Items.Add(BuildRadioMenu());
+            _menu.Items.Add(BuildMusicMenu());
 
             ToolStripMenuItem kb = new ToolStripMenuItem("显示小键盘");
             kb.Checked = _cfg.ShowKeyboard;
@@ -911,6 +943,309 @@ namespace FlatCat
 
             ContextMenuStrip = _menu;
         }
+
+        #region 截图 / 电台 / 音乐
+        private ToolStripMenuItem BuildShotMenu()
+        {
+            ToolStripMenuItem root = new ToolStripMenuItem("截图");
+
+            ToolStripMenuItem full = new ToolStripMenuItem("全屏");
+            full.Click += delegate { DoShot(ShotMode.FullScreen); };
+            root.DropDownItems.Add(full);
+
+            ToolStripMenuItem rect = new ToolStripMenuItem("矩形选区");
+            rect.Click += delegate { DoShot(ShotMode.Rect); };
+            root.DropDownItems.Add(rect);
+
+            ToolStripMenuItem lasso = new ToolStripMenuItem("不规则（套索）");
+            lasso.Click += delegate { DoShot(ShotMode.Lasso); };
+            root.DropDownItems.Add(lasso);
+
+            root.DropDownItems.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem hide = new ToolStripMenuItem("截图时隐藏小猫");
+            hide.Checked = _cfg.CaptureHideCat;
+            hide.Click += delegate
+            {
+                _cfg.CaptureHideCat = !_cfg.CaptureHideCat;
+                hide.Checked = _cfg.CaptureHideCat;
+                _cfg.Save();
+            };
+            root.DropDownItems.Add(hide);
+
+            ToolStripMenuItem folder = new ToolStripMenuItem("打开截图文件夹");
+            folder.Click += delegate { OpenCaptureFolder(); };
+            root.DropDownItems.Add(folder);
+
+            return root;
+        }
+
+        /// <summary>截图主流程：可选先藏起小猫 → 取景 → 抓屏 → 裁剪 → 落盘。</summary>
+        private void DoShot(ShotMode mode)
+        {
+            if (_shotBusy) return;
+            _shotBusy = true;
+            bool hideCat = _cfg.CaptureHideCat && !_hidden;
+            try
+            {
+                if (hideCat)
+                {
+                    Hide();
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(140);
+                }
+
+                Rectangle pick = Rectangle.Empty;
+                List<Point> poly = null;
+
+                if (mode == ShotMode.FullScreen)
+                {
+                    pick = Shot.VirtualBounds;
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(120);
+                }
+                else
+                {
+                    using (CaptureOverlay ov = new CaptureOverlay(mode))
+                    {
+                        ov.ShowDialog(this);
+                        if (mode == ShotMode.Lasso) poly = ov.SelectedPoints;
+                        else pick = ov.SelectedRect;
+                    }
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(180);
+                }
+
+                if (mode == ShotMode.Rect && (pick.Width < 4 || pick.Height < 4)) return;
+                if (mode == ShotMode.Lasso && (poly == null || poly.Count < 3)) return;
+
+                Bitmap shot;
+                if (mode == ShotMode.Lasso)
+                {
+                    using (Bitmap full = Shot.Grab(Shot.VirtualBounds))
+                    {
+                        shot = Shot.CropToPolygon(full, Shot.VirtualBounds, poly);
+                    }
+                }
+                else
+                {
+                    shot = Shot.Grab(pick);
+                }
+
+                string path = Shot.Save(shot, _cfg.CaptureDir);
+                if (_cfg.CaptureCopy) Shot.CopyToClipboard(shot);
+                int w = shot.Width, h = shot.Height;
+                shot.Dispose();
+
+                if (_tray != null)
+                {
+                    if (path != null) _tray.ShowBalloonTip(3000, "截图已保存", w + " × " + h + "  " + path, ToolTipIcon.Info);
+                    else _tray.ShowBalloonTip(3000, "截图已抓取", "保存失败，已尝试复制到剪贴板", ToolTipIcon.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (_tray != null) _tray.ShowBalloonTip(3000, "截图失败", ex.Message, ToolTipIcon.Error);
+            }
+            finally
+            {
+                if (hideCat)
+                {
+                    Show();
+                    SetThrough(true);
+                    RenderFrame();
+                }
+                _shotBusy = false;
+            }
+        }
+
+        private void OpenCaptureFolder()
+        {
+            try
+            {
+                string dir = _cfg.CaptureDir;
+                if (string.IsNullOrEmpty(dir)) dir = Shot.DefaultDir;
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                Process.Start("explorer.exe", "\"" + dir + "\"");
+            }
+            catch { }
+        }
+
+        private ToolStripMenuItem BuildRadioMenu()
+        {
+            ToolStripMenuItem root = new ToolStripMenuItem("电台");
+            root.DropDownOpening += delegate { FillRadioMenu(root); };
+            FillRadioMenu(root);
+            return root;
+        }
+
+        private void FillRadioMenu(ToolStripMenuItem root)
+        {
+            root.DropDownItems.Clear();
+
+            List<RadioStation> presets = Radios.Presets();
+            for (int i = 0; i < presets.Count; i++)
+            {
+                RadioStation st = presets[i];
+                ToolStripMenuItem item = new ToolStripMenuItem(st.Name);
+                item.Click += delegate { PlayRadio(st); };
+                root.DropDownItems.Add(item);
+            }
+
+            if (_cfg.CustomRadios != null && _cfg.CustomRadios.Count > 0)
+            {
+                root.DropDownItems.Add(new ToolStripSeparator());
+                for (int i = 0; i < _cfg.CustomRadios.Count; i++)
+                {
+                    RadioStation st = _cfg.CustomRadios[i];
+                    ToolStripMenuItem item = new ToolStripMenuItem(st.Name + "（自定义）");
+                    item.Click += delegate { PlayRadio(st); };
+                    root.DropDownItems.Add(item);
+                }
+            }
+
+            root.DropDownItems.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem stop = new ToolStripMenuItem("停止播放");
+            stop.Click += delegate { if (_audio != null) _audio.Stop(); };
+            root.DropDownItems.Add(stop);
+
+            ToolStripMenuItem pause = new ToolStripMenuItem("暂停 / 继续");
+            pause.Click += delegate
+            {
+                if (_audio == null) return;
+                if (_audio.IsPlaying) _audio.Pause(); else _audio.Resume();
+            };
+            root.DropDownItems.Add(pause);
+
+            root.DropDownItems.Add(BuildVolumeMenu());
+
+            ToolStripMenuItem manage = new ToolStripMenuItem("管理电台…");
+            manage.Click += delegate { OpenSettingsAt(4); };
+            root.DropDownItems.Add(manage);
+        }
+
+        private ToolStripMenuItem BuildVolumeMenu()
+        {
+            ToolStripMenuItem vol = new ToolStripMenuItem("音量");
+            int[] levels = new int[] { 25, 50, 75, 100 };
+            for (int i = 0; i < levels.Length; i++)
+            {
+                int v = levels[i];
+                ToolStripMenuItem item = new ToolStripMenuItem(v + "%");
+                item.Checked = Math.Abs(_cfg.Volume - v) < 13;
+                item.Click += delegate
+                {
+                    _cfg.Volume = v;
+                    _cfg.Save();
+                    if (_audio != null) _audio.SetVolume(v / 100.0);
+                    Notify("音量", v + "%");
+                };
+                vol.DropDownItems.Add(item);
+            }
+            return vol;
+        }
+
+        private void PlayRadio(RadioStation st)
+        {
+            if (st == null || _audio == null) return;
+            if (_audio.PlayUrl(st.Url, st.Name)) Notify("电台", "正在连接：" + st.Name);
+            else Notify("电台", "地址不合法：" + st.Url);
+        }
+
+        private ToolStripMenuItem BuildMusicMenu()
+        {
+            ToolStripMenuItem root = new ToolStripMenuItem("本地音乐");
+
+            ToolStripMenuItem files = new ToolStripMenuItem("选择文件播放…");
+            files.Click += delegate { PickMusicFiles(); };
+            root.DropDownItems.Add(files);
+
+            ToolStripMenuItem folder = new ToolStripMenuItem("播放整个文件夹…");
+            folder.Click += delegate { PickMusicFolder(); };
+            root.DropDownItems.Add(folder);
+
+            root.DropDownItems.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem next = new ToolStripMenuItem("下一首");
+            next.Click += delegate { if (_audio != null) _audio.Next(); };
+            root.DropDownItems.Add(next);
+
+            ToolStripMenuItem prev = new ToolStripMenuItem("上一首");
+            prev.Click += delegate { if (_audio != null) _audio.Previous(); };
+            root.DropDownItems.Add(prev);
+
+            ToolStripMenuItem stop = new ToolStripMenuItem("停止");
+            stop.Click += delegate { if (_audio != null) _audio.Stop(); };
+            root.DropDownItems.Add(stop);
+
+            return root;
+        }
+
+        private void PickMusicFiles()
+        {
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Title = "选择要播放的音乐";
+                dlg.Filter = "音频文件|*.mp3;*.wav;*.wma;*.m4a;*.aac;*.flac|所有文件|*.*";
+                dlg.Multiselect = true;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                List<string> list = new List<string>(dlg.FileNames);
+                if (list.Count == 0) return;
+                _audio.PlayFiles(list, 0);
+                Notify("本地音乐", "开始播放 " + list.Count + " 首");
+            }
+        }
+
+        private void PickMusicFolder()
+        {
+            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "选择音乐文件夹（递归收录 mp3/wav/wma/m4a/aac/flac，最多 500 首）";
+                if (!string.IsNullOrEmpty(_cfg.MusicFolder) && Directory.Exists(_cfg.MusicFolder))
+                    dlg.SelectedPath = _cfg.MusicFolder;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                _cfg.MusicFolder = dlg.SelectedPath;
+                _cfg.Save();
+                List<string> list = AudioPlayer.ScanFolder(dlg.SelectedPath);
+                if (list.Count == 0) { Notify("本地音乐", "这个文件夹里没有找到音频文件"); return; }
+                _audio.PlayFiles(list, 0);
+                Notify("本地音乐", "开始播放 " + list.Count + " 首");
+            }
+        }
+
+        /// <summary>供设置窗口调用。</summary>
+        public void PlayMusicFromSettings(List<string> files, int index)
+        {
+            if (_audio == null || files == null || files.Count == 0) return;
+            _audio.PlayFiles(files, index);
+        }
+
+        public void PlayRadioFromSettings(RadioStation st)
+        {
+            PlayRadio(st);
+        }
+
+        public void StopAudioFromSettings()
+        {
+            if (_audio != null) _audio.Stop();
+        }
+
+        public string AudioStatus
+        {
+            get { return _audio == null ? "" : _audio.Status; }
+        }
+
+        public void ApplyVolumeFromSettings(int percent)
+        {
+            if (_audio != null) _audio.SetVolume(Math.Max(0, Math.Min(100, percent)) / 100.0);
+        }
+
+        private void Notify(string title, string text)
+        {
+            if (_tray != null) _tray.ShowBalloonTip(2500, title, text, ToolTipIcon.Info);
+        }
+        #endregion
 
         private ToolStripMenuItem BuildCoatMenu()
         {
@@ -1154,7 +1489,7 @@ namespace FlatCat
         private void ShowAbout()
         {
             MessageBox.Show(
-                "桌面小猫 FlatCat 1.3\n\n" +
+                "桌面小猫 FlatCat 1.4\n\n" +
                 "透明窗口 + 全局键鼠响应 + 矢量猫。\n\n" +
                 "你在任何程序里打字，它会抬爪；\n" +
                 "把鼠标移到它头上按住，它会呼噜；\n" +
@@ -1162,11 +1497,8 @@ namespace FlatCat
                 "双击猫身或双击托盘图标 = 打开设置：\n" +
                 "毛色 / 配饰 / 斑纹 / 异瞳 / 大小，\n" +
                 "闹钟（可编辑、按星期重复、贪睡），\n" +
-                "番茄钟、喝水、倒计时、整点报时。
-
-" +
-                "© 2026 认知觉醒能量站 · 微信公众号同名
-" +
+                "番茄钟、喝水、倒计时、整点报时。\n\n" +
+                "© 2026 认知觉醒能量站 · 微信公众号同名\n" +
                 "MIT License · 源码见 GitHub",
                 "关于", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -1176,6 +1508,7 @@ namespace FlatCat
             _exiting = true;
             try { _timer.Stop(); } catch { }
             StopPurr();
+            try { if (_audio != null) _audio.Dispose(); } catch { }
             try { _input.Dispose(); } catch { }
             if (_settingsForm != null && !_settingsForm.IsDisposed) { try { _settingsForm.Close(); } catch { } }
             if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }

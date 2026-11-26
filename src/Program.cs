@@ -471,6 +471,81 @@ namespace FlatCat
             lines.Add("render.heterochromia = " + (heteroOk ? "PASS" : "FAIL"));
             if (!heteroOk) fails++;
 
+            // 截图：抓取 / 裁剪 / 落盘
+            bool grabOk = false;
+            using (Bitmap grab = Shot.Grab(new Rectangle(0, 0, 200, 120)))
+            {
+                grabOk = grab.Width == 200 && grab.Height == 120;
+            }
+            lines.Add("capture.grab = " + (grabOk ? "PASS" : "FAIL"));
+            if (!grabOk) fails++;
+
+            bool cropOk = false;
+            using (Bitmap canvas = new Bitmap(200, 200, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(canvas))
+                {
+                    g.Clear(Color.FromArgb(255, 255, 0, 0));
+                }
+                List<Point> poly = new List<Point>();
+                poly.Add(new Point(20, 20));
+                poly.Add(new Point(180, 20));
+                poly.Add(new Point(100, 180));
+                using (Bitmap cut = Shot.CropToPolygon(canvas, new Rectangle(0, 0, 200, 200), poly))
+                {
+                    Color inside = cut.GetPixel(cut.Width / 2, 40);
+                    Color outside = cut.GetPixel(2, 158);
+                    cropOk = cut.Width == 160 && cut.Height == 160 && inside.A > 200 && outside.A < 40;
+                }
+            }
+            lines.Add("capture.crop = " + (cropOk ? "PASS" : "FAIL"));
+            if (!cropOk) fails++;
+
+            bool saveOk = false;
+            string tempDir = Path.Combine(Path.GetTempPath(), "flatcat_selftest_shot");
+            using (Bitmap small = new Bitmap(64, 48, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(small)) g.Clear(Color.FromArgb(255, 196, 86, 63));
+                string shotSaved = Shot.Save(small, tempDir);
+                if (shotSaved != null && File.Exists(shotSaved))
+                {
+                    using (Bitmap shotBack = new Bitmap(shotSaved)) saveOk = shotBack.Width == 64 && shotBack.Height == 48;
+                }
+            }
+            lines.Add("capture.save = " + (saveOk ? "PASS" : "FAIL"));
+            if (!saveOk) fails++;
+
+            // 电台与播放器
+            List<RadioStation> presets = Radios.Presets();
+            bool presetOk = presets.Count >= 3;
+            for (int i = 0; i < presets.Count; i++)
+            {
+                Uri pu;
+                if (!Radios.IsHttp(presets[i].Url) || !Uri.TryCreate(presets[i].Url, UriKind.Absolute, out pu)) presetOk = false;
+            }
+            lines.Add("media.presets = " + (presetOk ? "PASS" : "FAIL") + " (" + presets.Count + " 个)");
+            if (!presetOk) fails++;
+
+            bool scanOk = AudioPlayer.ScanFolder(Path.Combine(Path.GetTempPath(), "no_such_dir_flatcat")).Count == 0;
+            lines.Add("media.scan_empty = " + (scanOk ? "PASS" : "FAIL"));
+            if (!scanOk) fails++;
+
+            bool playerOk = false;
+            try
+            {
+                using (AudioPlayer ap = new AudioPlayer())
+                {
+                    playerOk = !string.IsNullOrEmpty(ap.Status);
+                    ap.SetVolume(0.5);
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add("   player error: " + ex.GetType().Name);
+            }
+            lines.Add("media.player_thread = " + (playerOk ? "PASS" : "FAIL"));
+            if (!playerOk) fails++;
+
             float dpi;
             using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) dpi = g.DpiX;
             lines.Add("display.dpi = " + dpi);

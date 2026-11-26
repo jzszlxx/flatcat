@@ -32,7 +32,9 @@ cd src
   /r:System.Drawing.dll \
   /r:System.Windows.Forms.dll \
   /r:System.Runtime.Serialization.dll \
-  Program.cs PetForm.cs CatPainter.cs Core.cs SettingsForm.cs
+  "/r:C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\PresentationCore.dll" \
+  "/r:C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\WindowsBase.dll" \
+  Program.cs PetForm.cs CatPainter.cs Core.cs SettingsForm.cs Capture.cs Media.cs
 
 echo "构建完成: $ROOT/out/FlatCat.exe"
 ls -l "$ROOT/out/FlatCat.exe"
