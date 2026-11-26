@@ -42,6 +42,16 @@ namespace FlatCat
                 RenderFaces(args[1]);
                 return;
             }
+            if (args.Length >= 2 && args[0] == "--quote")
+            {
+                RenderQuotes(args[1]);
+                return;
+            }
+            if (args.Length >= 2 && args[0] == "--quotesizes")
+            {
+                RenderQuoteSizes(args[1]);
+                return;
+            }
 
             if (args.Length >= 2 && args[0] == "--selftest")
             {
@@ -149,6 +159,45 @@ namespace FlatCat
             }
         }
 
+        /// <summary>金句气泡四格：单行短句 / 两行 / 超长句 / 标点断行，用来看有没有被裁。</summary>
+        private static void RenderQuotes(string path)
+        {
+            string[] texts = new string[]
+            {
+                "上善若水",
+                "把今天过好，就是最好的长期主义。",
+                "安能摧眉折腰事权贵，使我不得开心颜",
+                "学而时习之，不亦说乎"
+            };
+            const int cellW = 380;
+            const int cellH = 380;
+            using (Bitmap bmp = new Bitmap(cellW * 2, cellH * 2 + 28, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.FromArgb(255, 244, 238, 228));
+                    for (int i = 0; i < texts.Length; i++)
+                    {
+                        int cx = i % 2, cy = i / 2;
+                        GraphicsState st = g.Save();
+                        g.TranslateTransform(cx * cellW + 30, cy * cellH);
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        CatPainter.DrawQuote(g, texts[i], 0.3f);
+                        g.TranslateTransform(0, CatPainter.BubbleH);
+                        CatPainter.Draw(g, CatAnim.ForState("idle"), false, Coats.All[0]);
+                        g.Restore(st);
+
+                        using (Pen p = new Pen(Color.FromArgb(40, 150, 120, 60), 1f))
+                        {
+                            if (cx == 1) g.DrawLine(p, cellW, cy * cellH, cellW, cy * cellH + cellH);
+                            if (cy == 1) g.DrawLine(p, cx * cellW, cellH, cx * cellW + cellW, cellH);
+                        }
+                    }
+                }
+                bmp.Save(path, ImageFormat.Png);
+            }
+        }
+
         private static void RenderCoats(string path)
         {
             int n = Coats.All.Length;
@@ -175,6 +224,58 @@ namespace FlatCat
 
                             g.ResetTransform();
                             g.DrawString(Coats.All[i].Name, f, b, new RectangleF(i * cellW, cellH, cellW, 24), sf);
+                        }
+                    }
+                }
+                bmp.Save(path, ImageFormat.Png);
+            }
+        }
+
+        /// <summary>同一句在 12 / 15 / 18 / 20px 四档字号下的样子：确认字号可调、不压耳朵、不被裁。</summary>
+        private static void RenderQuoteSizes(string path)
+        {
+            float[] sizes = new float[] { 12f, 15f, 18f, 20f };
+            string[] texts = new string[]
+            {
+                "上善若水，厚德载物",
+                "把今天过好，就是最好的长期主义。",
+                "安能摧眉折腰事权贵，使我不得开心颜",
+                "海内存知己，天涯若比邻"
+            };
+            const int cellW = 380;
+            const int cellH = 380;
+            using (Bitmap bmp = new Bitmap(cellW * 2, cellH * 2 + 34, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.FromArgb(255, 244, 238, 228));
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    for (int i = 0; i < texts.Length; i++)
+                    {
+                        int cx = i % 2, cy = i / 2;
+                        GraphicsState st = g.Save();
+                        g.TranslateTransform(cx * cellW + 30, cy * cellH);
+                        CatPainter.DrawQuote(g, texts[i], 0.3f, "Microsoft YaHei", sizes[i]);
+                        g.TranslateTransform(0, CatPainter.BubbleH);
+                        CatPainter.Draw(g, CatAnim.ForState("idle"), false, Coats.All[0]);
+                        g.Restore(st);
+
+                        using (Pen p = new Pen(Color.FromArgb(40, 150, 120, 60), 1f))
+                        {
+                            if (cx == 1) g.DrawLine(p, cellW, cy * cellH, cellW, cy * cellH + cellH);
+                            if (cy == 1) g.DrawLine(p, cx * cellW, cellH, cx * cellW + cellW, cellH);
+                        }
+                    }
+                    using (Font f = new Font("Microsoft YaHei", 14f, FontStyle.Bold, GraphicsUnit.Pixel))
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(70, 62, 52)))
+                    using (StringFormat sf = new StringFormat())
+                    {
+                        sf.Alignment = StringAlignment.Center;
+                        for (int i = 0; i < sizes.Length; i++)
+                        {
+                            int cx = i % 2, cy = i / 2;
+                            g.DrawString(((int)sizes[i]) + " px", f, b,
+                                         new RectangleF(cx * cellW, cy * cellH + cellH, cellW, 26), sf);
                         }
                     }
                 }
@@ -258,6 +359,13 @@ namespace FlatCat
             probe.ShowSpots = false;
             probe.Heterochromia = true;
             probe.ClockMode = true;
+            probe.HeadMode = 2;
+            probe.QuoteCats = QuoteBank.CatPoem;
+            probe.QuoteMinutes = 90;
+            probe.QuoteFont = "SimSun";
+            probe.QuoteFontSize = 18;
+            probe.CustomQuotes.Add(new CustomQuote("自检：读万卷书，行万里路", "佚名", "自检用例"));
+            probe.CustomQuotes.Add(new CustomQuote("自检：纸上得来终觉浅，绝知此事要躬行", "陆游", "冬夜读书示子聿"));
             probe.TotalPomodoros = 42;
             probe.AlertLog.Add("12:00  测试提醒");
             probe.Hotkeys = false;
@@ -314,6 +422,169 @@ namespace FlatCat
                              && back.QuietStart == 23 && back.QuietEnd == 7;
             lines.Add("settings.v15_fields = " + (v15Fields ? "PASS" : "FAIL"));
             if (!v15Fields) fails++;
+
+            // v1.6 头顶显示与金句库
+            bool v16Fields = back.HeadMode == 2 && back.QuoteCats == QuoteBank.CatPoem
+                             && back.QuoteMinutes == 90;
+            lines.Add("settings.v16_fields = " + (v16Fields ? "PASS" : "FAIL")
+                      + " (head=" + back.HeadMode + " cats=" + back.QuoteCats + " min=" + back.QuoteMinutes + ")");
+            if (!v16Fields) fails++;
+
+            // v1.7 自定义金句库 + 字体字号往返
+            bool v17Fields = back.QuoteFont == "SimSun" && back.QuoteFontSize == 18
+                             && back.CustomQuotes != null && back.CustomQuotes.Count == 2
+                             && back.CustomQuotes[1].Author == "陆游";
+            lines.Add("settings.v17_fields = " + (v17Fields ? "PASS" : "FAIL")
+                      + " (font=" + back.QuoteFont + " size=" + back.QuoteFontSize
+                      + " custom=" + (back.CustomQuotes == null ? -1 : back.CustomQuotes.Count) + ")");
+            if (!v17Fields) fails++;
+
+            int qThought = QuoteBank.CountOf(QuoteBank.CatThought, null);
+            int qPoem = QuoteBank.CountOf(QuoteBank.CatPoem, null);
+            int qLine = QuoteBank.CountOf(QuoteBank.CatLine, null);
+            int qEmpty = 0, qLong = 0, qDup = 0;
+            HashSet<string> qSeen = new HashSet<string>();
+            for (int i = 0; i < QuoteBank.All.Length; i++)
+            {
+                Quote q = QuoteBank.All[i];
+                if (q.Text == null || q.Text.Length == 0 || q.Source == null) qEmpty++;
+                else if (q.Text.Length > 28) qLong++;
+                if (q.Text != null && !qSeen.Add(q.Text)) qDup++;
+            }
+            bool bankOk = qThought > 0 && qPoem > 0 && qLine > 0
+                          && QuoteBank.All.Length == qThought + qPoem + qLine
+                          && qEmpty == 0 && qLong == 0 && qDup == 0;
+            lines.Add("quote.bank = " + (bankOk ? "PASS" : "FAIL") + " (哲思" + qThought
+                      + "/诗句" + qPoem + "/金句" + qLine + " 总" + QuoteBank.All.Length
+                      + " 空" + qEmpty + " 长" + qLong + " 重" + qDup + ")");
+            if (!bankOk) fails++;
+
+            // 只从勾选分类里取；同一条不会连着出两次
+            Random qr = new Random(7);
+            bool pickOk = true;
+            for (int i = 0; i < 60; i++)
+            {
+                Quote q = QuoteBank.Pick(QuoteBank.BuildPool(QuoteBank.CatPoem, null), null, qr);
+                if (q == null || q.Cat != QuoteBank.CatPoem) { pickOk = false; break; }
+            }
+            List<Quote> linePool = QuoteBank.BuildPool(QuoteBank.CatLine, null);
+            Quote q1 = QuoteBank.Pick(linePool, null, qr);
+            Quote q2 = QuoteBank.Pick(linePool, q1 == null ? "" : q1.Text, qr);
+            if (q1 == null || q2 == null || q1.Text == q2.Text) pickOk = false;
+            lines.Add("quote.pick = " + (pickOk ? "PASS" : "FAIL")
+                      + " (" + (q1 == null ? "-" : q1.Text) + " / " + (q2 == null ? "-" : q2.Text) + ")");
+            if (!pickOk) fails++;
+
+            // 金句气泡两行折行：超过一行要折成两行，标点处断开，且一个字都不能丢
+            string longQuote = new string('甲', 9) + "，" + new string('乙', 14);
+            int wrapPer = CatPainter.PerLineFor(15f);
+            string ql1, ql2;
+            CatPainter.SplitQuoteForTest(longQuote, out ql1, out ql2);
+            bool wrapOk = ql1.Length > 0 && ql2 != null
+                          && ql1.Length <= wrapPer && ql2.Length <= wrapPer
+                          && ql1.EndsWith("，") && (ql1 + ql2) == longQuote;
+            lines.Add("quote.wrap = " + (wrapOk ? "PASS" : "FAIL") + " (" + ql1 + " / " + ql2 + ")");
+            if (!wrapOk) fails++;
+
+            // 第二行只剩标点时并回第一行，别让气泡里出现孤零零一个句号
+            string qt1, qt2;
+            CatPainter.SplitQuoteForTest("把今天过好，就是最好的长期主义。", out qt1, out qt2);
+            bool tailPunctOk = qt2 == null && qt1.EndsWith("。") && qt1.Length == 16;
+            lines.Add("quote.tail_punct = " + (tailPunctOk ? "PASS" : "FAIL")
+                      + " (" + qt1 + " / " + (qt2 == null ? "null" : qt2) + ")");
+            if (!tailPunctOk) fails++;
+
+            // 我的金句库：进池、计数、分类隔离
+            List<CustomQuote> mine = new List<CustomQuote>();
+            mine.Add(new CustomQuote("自检一：今天也要好好吃饭", "", ""));
+            mine.Add(new CustomQuote("自检二：做完一件事再开下一件", "FlatCat", "自检"));
+            int customMaskCount = QuoteBank.CountOf(QuoteBank.CatCustom, mine);
+            List<Quote> customPool = QuoteBank.BuildPool(QuoteBank.CatCustom, mine);
+            bool customPoolOk = customMaskCount == 2 && customPool.Count == 2
+                                && customPool[0].Cat == QuoteBank.CatCustom
+                                && customPool[1].Text == "自检二：做完一件事再开下一件";
+            List<Quote> poemOnly = QuoteBank.BuildPool(QuoteBank.CatPoem, mine);
+            bool customIsolated = true;
+            for (int i = 0; i < poemOnly.Count; i++)
+                if (poemOnly[i].Cat == QuoteBank.CatCustom) { customIsolated = false; break; }
+            lines.Add("quote.custom_pool = " + ((customPoolOk && customIsolated) ? "PASS" : "FAIL")
+                      + " (count=" + customMaskCount + " pool=" + customPool.Count + " isolated=" + customIsolated + ")");
+            if (!customPoolOk || !customIsolated) fails++;
+
+            // 去重 / 超长 / 上限：重复内置句、同一句换个标点、超 200 字都要跳过
+            List<CustomQuote> dupIn = new List<CustomQuote>();
+            dupIn.Add(new CustomQuote("自检一：今天也要好好吃饭", "", ""));
+            dupIn.Add(new CustomQuote("海上生明月,天涯共此时", "", ""));
+            dupIn.Add(new CustomQuote(new string('长', 260), "", ""));
+            dupIn.Add(new CustomQuote("自检三：新的句子", "", ""));
+            int dupSkip;
+            int dupAdded = QuoteIo.Add(dupIn, mine, out dupSkip);
+            bool dedupOk = dupAdded == 1 && dupSkip == 3 && mine.Count == 3;
+            lines.Add("quote.custom_dedup = " + (dedupOk ? "PASS" : "FAIL")
+                      + " (added=" + dupAdded + " skipped=" + dupSkip + " total=" + mine.Count + ")");
+            if (!dedupOk) fails++;
+
+            // 导入文件：UTF-8 txt（含 | 分隔与重复行）与 json 字符串数组
+            string tTxt = Path.Combine(Path.GetTempPath(), "flatcat_q_selftest.txt");
+            string tJson = Path.Combine(Path.GetTempPath(), "flatcat_q_selftest.json");
+            int importAdded = 0, importSkip = 0;
+            string importErr = null;
+            try
+            {
+                string txt = "# 注释行" + Environment.NewLine
+                           + "自检六：txt 导入第一句|自检" + Environment.NewLine
+                           + "自检七：txt 导入第二句" + Environment.NewLine
+                           + "自检三：新的句子" + Environment.NewLine;
+                File.WriteAllText(tTxt, txt, new UTF8Encoding(false));
+                File.WriteAllText(tJson, "[\"自检八：json 第一句\", \"自检九：json 第二句\", \"自检一：今天也要好好吃饭\"]", new UTF8Encoding(false));
+                int sk1;
+                string er1;
+                importAdded += QuoteIo.Import(tTxt, mine, out sk1, out er1);
+                importSkip += sk1;
+                if (er1 != null) importErr = er1;
+                int sk2;
+                string er2;
+                importAdded += QuoteIo.Import(tJson, mine, out sk2, out er2);
+                importSkip += sk2;
+                if (er2 != null) importErr = er2;
+            }
+            catch (Exception ex) { importErr = ex.GetType().Name; }
+            finally
+            {
+                try { if (File.Exists(tTxt)) File.Delete(tTxt); } catch { }
+                try { if (File.Exists(tJson)) File.Delete(tJson); } catch { }
+            }
+            bool importOk = importErr == null && importAdded == 4 && importSkip == 2 && mine.Count == 7;
+            lines.Add("quote.import = " + (importOk ? "PASS" : "FAIL")
+                      + " (added=" + importAdded + " skipped=" + importSkip + " total=" + mine.Count
+                      + " err=" + (importErr == null ? "-" : importErr) + ")");
+            if (!importOk) fails++;
+
+            // 坏 JSON 不能被当成一句金句存进去（1.7 修：JSON 解析失败不回退按行读）
+            bool jsonReject = QuoteIo.Parse("[{\"text\":\"a\", \"b\"]").Count == 0
+                              && QuoteIo.Parse("{不是 json").Count == 0;
+            lines.Add("quote.json_bad = " + (jsonReject ? "PASS" : "FAIL"));
+            if (!jsonReject) fails++;
+
+            // 字号改折行：字号越大每行越少，20px 时不能还按 17 字折
+            int p12 = CatPainter.PerLineFor(12f), p15 = CatPainter.PerLineFor(15f), p20 = CatPainter.PerLineFor(20f);
+            string s20a, s20b, s12a, s12b;
+            CatPainter.SplitQuoteForTest("安能摧眉折腰事权贵，使我不得开心颜", 20f, out s20a, out s20b);
+            CatPainter.SplitQuoteForTest("安能摧眉折腰事权贵，使我不得开心颜", 12f, out s12a, out s12b);
+            bool sizeWrapOk = p12 > p15 && p15 > p20 && p20 >= 8
+                              && s20a.Length <= p20 && s20b != null && s20b.Length <= p20
+                              && s12a.Length <= p12;
+            lines.Add("quote.wrap_size = " + (sizeWrapOk ? "PASS" : "FAIL")
+                      + " (12/" + p12 + " 15/" + p15 + " 20/" + p20
+                      + " → " + s20a.Length + "+" + (s20b == null ? 0 : s20b.Length) + ")");
+            if (!sizeWrapOk) fails++;
+
+            // 字体不存在时回退到本机真实存在的字体
+            string fallback = CatPainter.ResolveFont("NoSuchFontForFlatCat123");
+            bool fontOk = fallback != "NoSuchFontForFlatCat123" && CatPainter.FontExists(fallback)
+                          && CatPainter.FontExists(CatPainter.ResolveFont("SimSun"));
+            lines.Add("quote.font_fallback = " + (fontOk ? "PASS" : "FAIL") + " (" + fallback + ")");
+            if (!fontOk) fails++;
 
             // v1.5 静默时段闸门：跨午夜、同侧、起止相同（视为关闭）
             bool quietOk = Reminder.InQuiet(true, 22, 8, 23)
@@ -385,13 +656,14 @@ namespace FlatCat
                 string navTitles = string.Join("/", probeForm.NavTitles);
                 lines.Add("ui.client = " + probeForm.ClientSize.Width + "x" + probeForm.ClientSize.Height);
                 // v1.5 UI 壳：左导航要列出 6 个页签，空壳等于没做
-                bool navOk = navCount == 6;
+                bool navOk = navCount == 7;
                 lines.Add("ui.nav_items = " + (navOk ? "PASS" : "FAIL") + " (" + navCount + " " + navTitles + ")");
                 if (!navOk) fails++;
 
                 // 逐项点击导航，检查内容区是否真的跟着换页、并且不是空的
                 bool navSwitch = true;
                 string navLog = "";
+                string quietLog = "";
                 for (int i = 0; i < navCount; i++)
                 {
                     probeForm.SelectNav(i);
@@ -403,6 +675,28 @@ namespace FlatCat
                 lines.Add("ui.nav_switch = " + (navSwitch ? "PASS" : "FAIL") + " (" + navLog.Trim() + ")");
                 if (!navSwitch) fails++;
                 probeForm.Dispose();
+
+                // v1.7 金句页：切到第 2 页，回读示例/字体/字号/自定义库，模拟添加一句
+                SettingsForm qf = new SettingsForm(new Settings(), null);
+                qf.SelectNav(1);
+                bool onQuotePage = qf.CurrentPage == 1;
+                qf.AddQuoteForTest("自检页：添加一句金句");
+                qf.AddQuoteForTest("自检页：添加一句金句");
+                int qCtrl = qf.ControlCountOnCurrentPage;
+                bool quotePageOk = onQuotePage && qCtrl > 0
+                                   && qf.QuoteCustomCountForTest == 1
+                                   && qf.QuoteSampleTextForTest.Length > 0
+                                   && qf.QuoteFontCountForTest >= 1
+                                   && qf.QuoteFontSelectedForTest.Length > 0
+                                   && Math.Abs(qf.QuoteSampleSizeForTest - 15f) < 0.01f;
+                quietLog = "page=" + qf.CurrentPage + " ctrl=" + qCtrl
+                           + " custom=" + qf.QuoteCustomCountForTest
+                           + " fonts=" + qf.QuoteFontCountForTest
+                           + "/" + qf.QuoteFontSelectedForTest
+                           + " size=" + qf.QuoteSampleSizeForTest;
+                qf.Dispose();
+                lines.Add("ui.quote_page = " + (quotePageOk ? "PASS" : "FAIL") + " (" + quietLog + ")");
+                if (!quotePageOk) fails++;
 
                 // 回归：搜索框清空后导航不能被占位符文本过滤成空列表（1.5.0 的 P0 缺陷）
                 int navAfterSearch = 0;
@@ -418,7 +712,7 @@ namespace FlatCat
                     sf.Dispose();
                 }
                 catch (Exception ex) { navSearchLog = ex.GetType().Name; }
-                bool navSearchOk = navAfterSearch == 6;
+                bool navSearchOk = navAfterSearch == 7;
                 lines.Add("ui.nav_after_search = " + (navSearchOk ? "PASS" : "FAIL") + " (" + navSearchLog + ")");
                 if (!navSearchOk) fails++;
                 lines.Add("settings.form_build = " + (ctrlCount > 0 ? "PASS" : "FAIL")

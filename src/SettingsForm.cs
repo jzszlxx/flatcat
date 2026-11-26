@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace FlatCat
@@ -26,7 +27,28 @@ namespace FlatCat
         private CheckBox _showKeyboard;
         private CheckBox _showSpots;
         private CheckBox _hetero;
-        private CheckBox _clockMode;
+        // v1.6 头顶显示三选一 + 金句分类/间隔
+        private RadioButton _headNone;
+        private RadioButton _headTime;
+        private RadioButton _headQuote;
+        private CheckBox _quoteThought;
+        private CheckBox _quotePoem;
+        private CheckBox _quoteLine;
+        private NumericUpDown _quoteMinutes;
+        private Panel _quoteSample;
+        private string _quoteSampleText = "";
+        private string _quoteSampleCredit = "";
+        private Label _quotePoolLabel;
+        private Label _quoteCountLabel;
+        // v1.7 金句页：字体、字号、我的金句库
+        private ComboBox _quoteFontBox;
+        private NumericUpDown _quoteSizeBox;
+        private CheckBox _quoteCustom;
+        private TextBox _quoteInput;
+        private ListBox _quoteList;
+        private readonly Random _sampleRand = new Random();
+        /// <summary>设置页点「立即换一条」时抛给主窗口。</summary>
+        public event Action RollQuoteRequested;
 
         // 行为
         private NumericUpDown _sleepMinutes;
@@ -143,6 +165,7 @@ namespace FlatCat
             _tabs.SizeMode = TabSizeMode.Fixed;
 
             _tabs.TabPages.Add(BuildAppearancePage());
+            _tabs.TabPages.Add(BuildQuotePage());
             _tabs.TabPages.Add(BuildBehaviorPage());
             _tabs.TabPages.Add(BuildReminderPage());
             _tabs.TabPages.Add(BuildSystemPage());
@@ -212,14 +235,165 @@ namespace FlatCat
             _hetero = NewCheck("异瞳（一只眼换色）", 170, 240, 200);
             page.Controls.Add(_hetero);
 
-            _clockMode = NewCheck("头顶常显当前时间", 20, 270, 240);
-            page.Controls.Add(_clockMode);
+            Label ht = NewLabel("", 20, 272);
+            ht.SetBounds(20, 272, 660, 44);
+            ht.ForeColor = Color.Gray;
+            ht.Text = "头顶显示时间或金句、金句分类与更换间隔、字体字号、我的金句库，都在左侧「金句」页设置。";
+            page.Controls.Add(ht);
 
-            Label tip = NewLabel("", 20, 304);
-            tip.SetBounds(20, 304, 570, 60);
+            return page;
+        }
+
+        // ---------------------------------------------------------------- 金句
+        private static readonly string[] QuoteFontCandidates = new string[]
+        {
+            "Microsoft YaHei", "微软雅黑", "等线", "宋体", "黑体", "楷体", "仿宋",
+            "华文中宋", "幼圆", "隶书", "华文楷体", "华文宋体", "Segoe UI", "Consolas"
+        };
+
+        private TabPage BuildQuotePage()
+        {
+            TabPage page = NewPage("金句");
+
+            page.Controls.Add(NewLabel("头顶显示", 20, 22));
+            _headNone = NewRadio("不显示", 112, 20, 84, true);
+            _headTime = NewRadio("时间", 200, 20, 70, false);
+            _headQuote = NewRadio("金句", 280, 20, 70, false);
+            page.Controls.Add(_headNone);
+            page.Controls.Add(_headTime);
+            page.Controls.Add(_headQuote);
+
+            page.Controls.Add(NewLabel("抽句范围", 20, 54));
+            _quoteThought = NewCheck("哲思", 112, 52, 64);
+            _quotePoem = NewCheck("诗句", 182, 52, 64);
+            _quoteLine = NewCheck("金句", 252, 52, 64);
+            _quoteCustom = NewCheck("我的", 322, 52, 64);
+            _quoteThought.CheckedChanged += delegate { RefreshQuoteSample(); };
+            _quotePoem.CheckedChanged += delegate { RefreshQuoteSample(); };
+            _quoteLine.CheckedChanged += delegate { RefreshQuoteSample(); };
+            _quoteCustom.CheckedChanged += delegate { RefreshQuoteSample(); };
+            page.Controls.Add(_quoteThought);
+            page.Controls.Add(_quotePoem);
+            page.Controls.Add(_quoteLine);
+            page.Controls.Add(_quoteCustom);
+
+            _quotePoolLabel = NewLabel("", 20, 80);
+            _quotePoolLabel.SetBounds(20, 80, 660, 20);
+            _quotePoolLabel.ForeColor = Color.Gray;
+            page.Controls.Add(_quotePoolLabel);
+
+            page.Controls.Add(NewLabel("更换间隔", 20, 112));
+            _quoteMinutes = new NumericUpDown();
+            _quoteMinutes.SetBounds(112, 108, 72, 24);
+            _quoteMinutes.Minimum = 30;
+            _quoteMinutes.Maximum = 1440;
+            _quoteMinutes.Increment = 30;
+            _quoteMinutes.Value = 60;
+            page.Controls.Add(_quoteMinutes);
+            page.Controls.Add(NewLabel("分钟（30 – 1440）", 190, 112));
+
+            Button roll = new Button();
+            roll.Text = "立即换一条";
+            roll.SetBounds(360, 107, 104, 26);
+            roll.Click += delegate { if (RollQuoteRequested != null) RollQuoteRequested(); };
+            page.Controls.Add(roll);
+
+            page.Controls.Add(NewLabel("字体", 20, 146));
+            _quoteFontBox = new ComboBox();
+            _quoteFontBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            _quoteFontBox.SetBounds(112, 142, 190, 24);
+            _quoteFontBox.SelectedIndexChanged += delegate { RefreshQuoteSample(); };
+            page.Controls.Add(_quoteFontBox);
+
+            page.Controls.Add(NewLabel("字号", 316, 146));
+            _quoteSizeBox = new NumericUpDown();
+            _quoteSizeBox.SetBounds(360, 142, 60, 24);
+            _quoteSizeBox.Minimum = 12;
+            _quoteSizeBox.Maximum = 20;
+            _quoteSizeBox.Value = 15;
+            _quoteSizeBox.ValueChanged += delegate { RefreshQuoteSample(); };
+            page.Controls.Add(_quoteSizeBox);
+            page.Controls.Add(NewLabel("px（12 – 20）", 428, 146));
+
+            // 示例用自绘 Panel 直接调 CatPainter.DrawQuote：看到的就是头顶真实效果
+            _quoteSample = new Panel();
+            _quoteSample.SetBounds(20, 172, 660, 60);
+            _quoteSample.BackColor = Color.FromArgb(247, 242, 234);
+            _quoteSample.Paint += delegate(object s, PaintEventArgs e)
+            {
+                if (_quoteSampleText.Length == 0) return;
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                e.Graphics.TranslateTransform(170f, 2f);
+                CatPainter.DrawQuote(e.Graphics, _quoteSampleText, 0.3f, QuoteFontFromUi(), QuoteSizeFromUi());
+                if (_quoteSampleCredit.Length > 0)
+                {
+                    using (Font f = new Font(QuoteFontFromUi(), 11f, FontStyle.Regular, GraphicsUnit.Pixel))
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(140, 124, 108)))
+                    using (StringFormat sf = new StringFormat())
+                    {
+                        sf.Alignment = StringAlignment.Center;
+                        e.Graphics.DrawString(_quoteSampleCredit, f, b, new RectangleF(26f, 46f, 268f, 14f), sf);
+                    }
+                }
+            };
+            page.Controls.Add(_quoteSample);
+
+            _quoteCountLabel = NewLabel("我的金句库", 20, 238);
+            _quoteCountLabel.SetBounds(20, 236, 660, 20);
+            _quoteCountLabel.Font = new Font(Font, FontStyle.Bold);
+            page.Controls.Add(_quoteCountLabel);
+
+            Label inputTip = NewLabel("", 20, 260);
+            inputTip.SetBounds(20, 258, 660, 20);
+            inputTip.ForeColor = Color.Gray;
+            inputTip.Text = "粘贴一句或整批文本（每行一句，可用 | 分隔作者和出处）；也可以直接导入文件。";
+            page.Controls.Add(inputTip);
+
+            _quoteInput = new TextBox();
+            _quoteInput.Multiline = true;
+            _quoteInput.ScrollBars = ScrollBars.Vertical;
+            _quoteInput.SetBounds(20, 280, 496, 46);
+            page.Controls.Add(_quoteInput);
+
+            Button addOne = new Button();
+            addOne.Text = "添加";
+            addOne.SetBounds(524, 280, 76, 24);
+            addOne.Click += delegate { AddQuotesFromInput(); };
+            page.Controls.Add(addOne);
+
+            Button import = new Button();
+            import.Text = "导入文件…";
+            import.SetBounds(524, 310, 76, 24);
+            import.Click += delegate { ImportQuoteFiles(); };
+            page.Controls.Add(import);
+
+            Button remove = new Button();
+            remove.Text = "删除选中";
+            remove.SetBounds(612, 280, 68, 24);
+            remove.Click += delegate { RemoveSelectedQuotes(); };
+            page.Controls.Add(remove);
+
+            Button clearAll = new Button();
+            clearAll.Text = "清空全部";
+            clearAll.SetBounds(612, 310, 68, 24);
+            clearAll.Click += delegate { ClearCustomQuotes(); };
+            page.Controls.Add(clearAll);
+
+            _quoteList = new ListBox();
+            _quoteList.SetBounds(20, 336, 660, 140);
+            _quoteList.HorizontalScrollbar = true;
+            page.Controls.Add(_quoteList);
+
+            Label tip = NewLabel("", 20, 484);
+            tip.SetBounds(20, 482, 660, 56);
             tip.ForeColor = Color.DimGray;
-            tip.Text = "毛色、配饰、斑纹、异瞳、时间显示点「确定 / 应用」后立即生效。\r\n" +
-                        "大小与不透明度同样即时套用；窗口会重新定位，避免跑到屏幕外。";
+            tip.Text = string.Join(Environment.NewLine, new string[]
+            {
+                "时间与金句只能选一个：选「金句」后，猫头顶按间隔换一句话。",
+                "支持的导入格式：txt / csv（每行一句，可用 | 或 Tab 分隔作者、出处），",
+                "或 json 数组（字符串，或带 text / author 字段的对象）。"
+            });
             page.Controls.Add(tip);
 
             return page;
@@ -1092,6 +1266,24 @@ namespace FlatCat
             }
         }
 
+        // ---- 供自检回读的金句页状态（不依赖截图） ----
+        public string QuoteSampleTextForTest { get { return _quoteSampleText; } }
+        public int QuoteFontCountForTest { get { return _quoteFontBox == null ? 0 : _quoteFontBox.Items.Count; } }
+        public string QuoteFontSelectedForTest
+        {
+            get { return _quoteFontBox == null || _quoteFontBox.SelectedItem == null ? "" : _quoteFontBox.SelectedItem.ToString(); }
+        }
+        public float QuoteSampleSizeForTest { get { return QuoteSizeFromUi(); } }
+        public int QuoteCustomCountForTest { get { return _work.CustomQuotes == null ? 0 : _work.CustomQuotes.Count; } }
+
+        /// <summary>模拟用户粘贴一句后点「添加」。</summary>
+        public void AddQuoteForTest(string text)
+        {
+            if (_quoteInput == null) return;
+            _quoteInput.Text = text;
+            AddQuotesFromInput();
+        }
+
         /// <summary>底部状态栏文案。</summary>
         public void SetStatus(string text)
         {
@@ -1148,6 +1340,187 @@ namespace FlatCat
             return c;
         }
 
+        private static RadioButton NewRadio(string text, int x, int y, int w, bool check)
+        {
+            RadioButton r = new RadioButton();
+            r.Text = text;
+            r.SetBounds(x, y, w, 22);
+            r.Checked = check;
+            return r;
+        }
+
+        /// <summary>四个分类勾选框折算成位掩码；一个都没勾时退回全部（含我的）。</summary>
+        private int QuoteCatsFromUi()
+        {
+            int mask = 0;
+            if (_quoteThought != null && _quoteThought.Checked) mask |= QuoteBank.CatThought;
+            if (_quotePoem != null && _quotePoem.Checked) mask |= QuoteBank.CatPoem;
+            if (_quoteLine != null && _quoteLine.Checked) mask |= QuoteBank.CatLine;
+            if (_quoteCustom != null && _quoteCustom.Checked) mask |= QuoteBank.CatCustom;
+            return mask == 0 ? QuoteBank.CatAll : mask;
+        }
+
+        private string QuoteFontFromUi()
+        {
+            if (_quoteFontBox == null || _quoteFontBox.SelectedItem == null) return "Microsoft YaHei";
+            return CatPainter.ResolveFont(_quoteFontBox.SelectedItem.ToString());
+        }
+
+        private float QuoteSizeFromUi()
+        {
+            if (_quoteSizeBox == null) return 15f;
+            return (float)_quoteSizeBox.Value;
+        }
+
+        /// <summary>字体下拉只列本机真装了的字体；当前配置的字体不在清单里也补进去。</summary>
+        private void FillQuoteFonts()
+        {
+            if (_quoteFontBox == null) return;
+            string cur = CatPainter.ResolveFont(_work.QuoteFont);
+            string[] list = CatPainter.PickFonts(QuoteFontCandidates);
+            _quoteFontBox.BeginUpdate();
+            _quoteFontBox.Items.Clear();
+            for (int i = 0; i < list.Length; i++) _quoteFontBox.Items.Add(list[i]);
+            int idx = -1;
+            for (int i = 0; i < _quoteFontBox.Items.Count; i++)
+                if (string.Equals(_quoteFontBox.Items[i].ToString(), cur, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+            if (idx < 0) { _quoteFontBox.Items.Insert(0, cur); idx = 0; }
+            _quoteFontBox.EndUpdate();
+            _quoteFontBox.SelectedIndex = idx;
+        }
+
+        /// <summary>我的金句列表：索引与 _work.CustomQuotes 一一对应。</summary>
+        private void RefreshQuoteList()
+        {
+            if (_quoteList == null) return;
+            _quoteList.BeginUpdate();
+            _quoteList.Items.Clear();
+            List<CustomQuote> list = _work.CustomQuotes;
+            if (list != null)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    CustomQuote c = list[i];
+                    if (c == null) continue;
+                    string row = c.Text;
+                    if (!string.IsNullOrEmpty(c.Author)) row += "  —— " + c.Author;
+                    _quoteList.Items.Add(row);
+                }
+            }
+            _quoteList.EndUpdate();
+        }
+
+        /// <summary>把输入框里的内容按行加进我的金句库（去重、限长、上限保护）。</summary>
+        private void AddQuotesFromInput()
+        {
+            if (_quoteInput == null) return;
+            string raw = _quoteInput.Text;
+            if (raw == null || raw.Trim().Length == 0)
+            {
+                SetStatus("先在上面写一句，再点「添加」");
+                return;
+            }
+            List<CustomQuote> parsed = QuoteIo.ParseLines(raw);
+            int skipped;
+            int added = QuoteIo.Add(parsed, _work.CustomQuotes, out skipped);
+            if (added > 0)
+            {
+                _quoteInput.Text = "";
+                if (!_quoteCustom.Checked) _quoteCustom.Checked = true;
+            }
+            RefreshQuoteList();
+            RefreshQuoteSample();
+            if (added == 0)
+                SetStatus("没添加成功：可能重复了，或已到 " + QuoteBank.CustomLimit + " 条上限");
+            else
+                SetStatus("已添加 " + added + " 句" + (skipped > 0 ? "，跳过 " + skipped + " 句（重复或超长）" : ""));
+        }
+
+        /// <summary>导入本地内容库：txt / csv / json，可多选。</summary>
+        private void ImportQuoteFiles()
+        {
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Title = "导入我的金句库";
+                dlg.Filter = "文本 / CSV (*.txt;*.csv)|*.txt;*.csv|JSON (*.json)|*.json|所有文件 (*.*)|*.*";
+                dlg.Multiselect = true;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                int total = 0, skipped = 0;
+                string err = "";
+                for (int i = 0; i < dlg.FileNames.Length; i++)
+                {
+                    int sk;
+                    string e;
+                    total += QuoteIo.Import(dlg.FileNames[i], _work.CustomQuotes, out sk, out e);
+                    skipped += sk;
+                    if (!string.IsNullOrEmpty(e)) err = Path.GetFileName(dlg.FileNames[i]) + "：" + e;
+                }
+                if (total > 0 && !_quoteCustom.Checked) _quoteCustom.Checked = true;
+                RefreshQuoteList();
+                RefreshQuoteSample();
+                if (err.Length > 0) SetStatus(err + "（其余新增 " + total + " 句）");
+                else SetStatus("导入完成：新增 " + total + " 句，跳过 " + skipped + " 句（重复或超长）");
+            }
+        }
+
+        private void RemoveSelectedQuotes()
+        {
+            if (_quoteList == null || _work.CustomQuotes == null) return;
+            int n = _quoteList.SelectedIndices.Count;
+            if (n == 0) { SetStatus("先在列表里选中要删的条目"); return; }
+            for (int i = n - 1; i >= 0; i--)
+            {
+                int idx = _quoteList.SelectedIndices[i];
+                if (idx >= 0 && idx < _work.CustomQuotes.Count) _work.CustomQuotes.RemoveAt(idx);
+            }
+            RefreshQuoteList();
+            RefreshQuoteSample();
+            SetStatus("已删除 " + n + " 条");
+        }
+
+        private void ClearCustomQuotes()
+        {
+            if (_work.CustomQuotes == null || _work.CustomQuotes.Count == 0)
+            {
+                SetStatus("我的金句库已经是空的");
+                return;
+            }
+            int n = _work.CustomQuotes.Count;
+            DialogResult r = MessageBox.Show(this,
+                "确定清空自己添加 / 导入的 " + n + " 条金句？内置的哲思、诗句、金句不受影响。",
+                "清空我的金句库", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
+            if (r != DialogResult.OK) return;
+            _work.CustomQuotes.Clear();
+            RefreshQuoteList();
+            RefreshQuoteSample();
+            SetStatus("已清空 " + n + " 条");
+        }
+
+        /// <summary>刷新「当前范围共多少句 / 抽一条示例」，示例按所选字体字号显示。</summary>
+        private void RefreshQuoteSample()
+        {
+            if (_quoteSample == null) return;
+            int mask = QuoteCatsFromUi();
+            List<CustomQuote> custom = _work.CustomQuotes;
+            int mine = custom == null ? 0 : custom.Count;
+            int total = QuoteBank.CountOf(mask, custom);
+            if (_quotePoolLabel != null)
+                _quotePoolLabel.Text = "共 " + total + " 句可选（内置 " + QuoteBank.All.Length + " 句，我的 " + mine + " 句）";
+            if (_quoteCountLabel != null)
+                _quoteCountLabel.Text = "我的金句库：已添加 " + mine + " 条，上限 " + QuoteBank.CustomLimit + " 条";
+
+            List<Quote> pool = QuoteBank.BuildPool(mask, custom);
+            Quote q = QuoteBank.Pick(pool, null, _sampleRand);
+            _quoteSampleText = q == null ? "" : q.Text;
+            _quoteSampleCredit = q == null ? "" : q.Credit;
+            if (q == null)
+            {
+                SetStatus("当前分类没有可用条目");
+                return;
+            }
+            _quoteSample.Invalidate();
+        }
+
         private void LoadValues()
         {
             _coatBox.SelectedIndex = Math.Max(0, Math.Min(Coats.All.Length - 1, _work.CoatId));
@@ -1166,7 +1539,20 @@ namespace FlatCat
             _showKeyboard.Checked = _work.ShowKeyboard;
             _showSpots.Checked = _work.ShowSpots;
             _hetero.Checked = _work.Heterochromia;
-            _clockMode.Checked = _work.ClockMode;
+            int headMode = _work.HeadMode;
+            if (headMode < 0 || headMode > 2) headMode = 0;
+            _headNone.Checked = headMode == 0;
+            _headTime.Checked = headMode == 1;
+            _headQuote.Checked = headMode == 2;
+            _quoteThought.Checked = (_work.QuoteCats & QuoteBank.CatThought) != 0;
+            _quotePoem.Checked = (_work.QuoteCats & QuoteBank.CatPoem) != 0;
+            _quoteLine.Checked = (_work.QuoteCats & QuoteBank.CatLine) != 0;
+            _quoteCustom.Checked = (_work.QuoteCats & QuoteBank.CatCustom) != 0;
+            _quoteMinutes.Value = Math.Max(_quoteMinutes.Minimum, Math.Min(_quoteMinutes.Maximum, _work.QuoteMinutes));
+            _quoteSizeBox.Value = Math.Max(_quoteSizeBox.Minimum, Math.Min(_quoteSizeBox.Maximum, _work.QuoteFontSize));
+            FillQuoteFonts();
+            RefreshQuoteList();
+            RefreshQuoteSample();
 
             _sleepMinutes.Value = Math.Max(_sleepMinutes.Minimum, Math.Min(_sleepMinutes.Maximum, _work.SleepMinutes));
             _idleActions.Checked = _work.IdleActions;
@@ -1320,7 +1706,12 @@ namespace FlatCat
             _work.AccessoryId = Math.Max(0, _accessoryBox.SelectedIndex);
             _work.ShowSpots = _showSpots.Checked;
             _work.Heterochromia = _hetero.Checked;
-            _work.ClockMode = _clockMode.Checked;
+            _work.HeadMode = _headTime.Checked ? 1 : (_headQuote.Checked ? 2 : 0);
+            _work.ClockMode = _work.HeadMode == 1;
+            _work.QuoteCats = QuoteCatsFromUi();
+            _work.QuoteMinutes = (int)_quoteMinutes.Value;
+            _work.QuoteFont = QuoteFontFromUi();
+            _work.QuoteFontSize = (int)_quoteSizeBox.Value;
             _work.Scale = _scaleBar.Value / 100.0;
             _work.Opacity = _opacityBar.Value / 100.0;
             _work.ShowKeyboard = _showKeyboard.Checked;

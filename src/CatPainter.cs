@@ -1,6 +1,7 @@
 // FlatCat - 矢量猫与气泡绘制（毛色 / 斑纹 / 异瞳 / 配饰）
 // Copyright (c) 2026 认知觉醒能量站 (微信公众号同名)。MIT License，见 LICENSE。
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
@@ -109,6 +110,189 @@ namespace FlatCat
 
                 using (SolidBrush b = new SolidBrush(inkColor))
                     g.DrawString(text, font, b, new RectangleF(x, y, w, h), sf);
+            }
+        }
+
+        /// <summary>金句气泡：正文最多折两行，字体与字号由设置决定，宽度 268 固定。</summary>
+        public static void DrawQuote(Graphics g, string text, float t)
+        {
+            DrawQuote(g, text, t, "Microsoft YaHei", 15f);
+        }
+
+        /// <summary>字号能塞进一行多少字：按 268 宽度与中文字宽估算，留一点余量。</summary>
+        public static int PerLineFor(float fontSize)
+        {
+            if (fontSize < 10f) fontSize = 10f;
+            if (fontSize > 20f) fontSize = 20f;
+            int n = (int)(268f / (fontSize * 1.02f));
+            if (n < 8) n = 8;
+            if (n > 22) n = 22;
+            return n;
+        }
+
+        /// <summary>两行时单行的高度：字号越大行距越紧，封顶 20.5 保证两行不越过猫头顶。</summary>
+        private static float LineH(float fontSize)
+        {
+            float lh = fontSize + 3f;
+            if (lh > 20.5f) lh = 20.5f;
+            return lh;
+        }
+
+        /// <summary>
+        /// 把用户写的字体名解析成本机字体族的规范名（如 Microsoft YaHei → 微软雅黑）。
+        /// GDI+ 自己认英文名和本地化名，这里借用它，解析不了返回 null。
+        /// </summary>
+        public static string CanonicalFont(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            try
+            {
+                using (FontFamily f = new FontFamily(name))
+                {
+                    if (f.Name != null && f.Name.Length > 0) return f.Name;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>本机是否存在该字体族。</summary>
+        public static bool FontExists(string name)
+        {
+            return CanonicalFont(name) != null;
+        }
+
+        /// <summary>字体缺失时回退微软雅黑，避免 new Font 静默换成别的字形。</summary>
+        public static string ResolveFont(string name)
+        {
+            string c = CanonicalFont(name);
+            if (!string.IsNullOrEmpty(c)) return c;
+            c = CanonicalFont("Microsoft YaHei");
+            if (!string.IsNullOrEmpty(c)) return c;
+            c = CanonicalFont("宋体");
+            return string.IsNullOrEmpty(c) ? "宋体" : c;
+        }
+
+        /// <summary>候选字体里本机实际装了的那些（统一成规范名、去重），供设置页下拉用。</summary>
+        public static string[] PickFonts(string[] wanted)
+        {
+            if (wanted == null) return new string[0];
+            List<string> hit = new List<string>();
+            HashSet<string> seen = new HashSet<string>();
+            for (int i = 0; i < wanted.Length; i++)
+            {
+                string c = CanonicalFont(wanted[i]);
+                if (c == null) continue;
+                if (!seen.Add(c.ToLowerInvariant())) continue;
+                hit.Add(c);
+            }
+            return hit.ToArray();
+        }
+
+        /// <summary>金句气泡（可指定字体与字号）。</summary>
+        public static void DrawQuote(Graphics g, string text, float t, string fontName, float fontSize)
+        {
+            if (text == null || text.Length == 0) return;
+            if (fontSize < 10f) fontSize = 10f;
+            if (fontSize > 20f) fontSize = 20f;
+
+            string line1, line2;
+            SplitQuote(text, PerLineFor(fontSize), out line1, out line2);
+
+            using (Font font = new Font(ResolveFont(fontName), fontSize, FontStyle.Regular, GraphicsUnit.Pixel))
+            using (StringFormat sf = new StringFormat())
+            {
+                sf.Alignment = StringAlignment.Center;
+                sf.LineAlignment = StringAlignment.Center;
+                sf.FormatFlags = StringFormatFlags.NoWrap;
+
+                float w = 268f;
+                float lh = LineH(fontSize);
+                float h = line2 == null ? lh + 14f : lh * 2f + 8f;
+                float bob = (float)Math.Sin(t * 2.6) * 2f;
+                float x = 160f - w / 2f;
+                // 气泡下沿始终贴着猫头顶（设计坐标 y=50），字号小时整体下移
+                float y = 50f - h + bob;
+
+                Color fill = Color.FromArgb(250, 255, 255, 251);
+                Color edge = Color.FromArgb(210, 200, 184);
+                Color ink = Color.FromArgb(58, 53, 46);
+
+                using (GraphicsPath body = RoundRect(new RectangleF(x, y, w, h), 14f))
+                {
+                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, body);
+                    using (Pen p = new Pen(edge, 1.6f)) g.DrawPath(p, body);
+                }
+
+                PointF[] tail = new PointF[]
+                {
+                    new PointF(151f, y + h - 1f),
+                    new PointF(169f, y + h - 1f),
+                    new PointF(160f, y + h + 9f)
+                };
+                using (GraphicsPath tp = new GraphicsPath())
+                {
+                    tp.AddPolygon(tail);
+                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, tp);
+                }
+                using (Pen p = new Pen(edge, 1.6f))
+                {
+                    p.StartCap = LineCap.Round;
+                    p.EndCap = LineCap.Round;
+                    g.DrawLine(p, tail[0], tail[2]);
+                    g.DrawLine(p, tail[2], tail[1]);
+                }
+
+                // 文字盒比行距高几像素：GDI+ 在矩形不够高时会裁掉字的上下缘（字号越大越明显）
+                float boxH = fontSize + 6f;
+                float blockH = line2 == null ? boxH : lh + boxH;
+                float top = y + (h - blockH) / 2f;
+                using (SolidBrush b = new SolidBrush(ink))
+                {
+                    g.DrawString(line1, font, b, new RectangleF(x, top, w, boxH), sf);
+                    if (line2 != null) g.DrawString(line2, font, b, new RectangleF(x, top + lh, w, boxH), sf);
+                }
+            }
+        }
+
+        /// <summary>供自检调用的折行入口（默认 15px）。</summary>
+        public static void SplitQuoteForTest(string text, out string first, out string second)
+        {
+            SplitQuote(text, PerLineFor(15f), out first, out second);
+        }
+
+        /// <summary>供自检调用的折行入口（指定字号）。</summary>
+        public static void SplitQuoteForTest(string text, float fontSize, out string first, out string second)
+        {
+            SplitQuote(text, PerLineFor(fontSize), out first, out second);
+        }
+
+        /// <summary>金句折行：优先在中间标点处断开，最长两行、每行 perLine 字。</summary>
+        private static void SplitQuote(string text, int perLine, out string first, out string second)
+        {
+            first = text;
+            second = null;
+            if (text.Length <= perLine) return;
+
+            int cut = -1;
+            int from = perLine / 2;
+            if (from < 4) from = 4;
+            for (int i = from; i <= perLine && i < text.Length; i++)
+            {
+                char c = text[i - 1];
+                if (c == '，' || c == '、' || c == '；' || c == '。' || c == '：') cut = i;
+            }
+            if (cut < 0) cut = perLine;
+
+            first = text.Substring(0, cut);
+            second = text.Substring(cut);
+            if (second.Length > perLine) second = second.Substring(0, perLine - 1) + "…";
+
+            // 第二行只剩标点时别单独占一行（会变成一个孤零零的句号），并回第一行
+            if (second != null && second.Trim('，', '。', '、', '；', '：', '！', '？', ' ').Length == 0)
+            {
+                first = first + second;
+                second = null;
             }
         }
 

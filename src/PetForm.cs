@@ -100,6 +100,11 @@ namespace FlatCat
         private readonly List<int> _hotkeysOn = new List<int>();
         private string _hotkeyHint = "";
 
+        // v1.6 头顶金句：当前这一句、它的署名、下次更换时间
+        private string _quoteText = "";
+        private string _quoteCredit = "";
+        private DateTime _quoteNext = DateTime.MinValue;
+
         public PetForm(Settings cfg)
         {
             _cfg = cfg;
@@ -260,8 +265,16 @@ namespace FlatCat
                 if (bubble != null)
                 {
                     bool alert = DateTime.Now < _alertUntil;
-                    float fontSize = (bubble.Length > 8) ? 16f : 19f;
-                    CatPainter.DrawBubble(g, bubble, _bubbleT, alert, fontSize);
+                    // 金句走多行气泡；提醒、倒计时、键名、番茄、时间仍用原单行样式
+                    if (!alert && _cfg.HeadMode == 2 && bubble == _quoteText)
+                    {
+                        CatPainter.DrawQuote(g, bubble, _bubbleT, _cfg.QuoteFont, _cfg.QuoteFontSize);
+                    }
+                    else
+                    {
+                        float fontSize = (bubble.Length > 8) ? 16f : 19f;
+                        CatPainter.DrawBubble(g, bubble, _bubbleT, alert, fontSize);
+                    }
                 }
 
                 GraphicsState st = g.Save();
@@ -329,10 +342,47 @@ namespace FlatCat
             if (_pomoMode == 1) return "专注 " + Reminder.Clock((int)Math.Ceiling((_pomoEnd - now).TotalSeconds));
             if (_pomoMode == 2) return "休息 " + Reminder.Clock((int)Math.Ceiling((_pomoEnd - now).TotalSeconds));
 
-            if (_cfg.ClockMode) return now.ToString("HH:mm");
+            // 头顶显示：1 = 时间，2 = 金句（v1.6 起与时间二选一）
+            if (_cfg.HeadMode == 1) return now.ToString("HH:mm");
+            if (_cfg.HeadMode == 2)
+            {
+                TickQuote(now);
+                return _quoteText.Length == 0 ? null : _quoteText;
+            }
 
             return null;
         }
+
+        /// <summary>到点就换一条金句；间隔由设置里的 quoteMinutes 决定（30–1440 分钟）。</summary>
+        private void TickQuote(DateTime now)
+        {
+            if (_quoteText.Length > 0 && now < _quoteNext) return;
+            RotateQuote(now);
+        }
+
+        /// <summary>立刻换一条金句，并重排下一次更换时间。</summary>
+        public void RotateQuote()
+        {
+            RotateQuote(DateTime.Now);
+        }
+
+        private void RotateQuote(DateTime now)
+        {
+            List<Quote> pool = QuoteBank.BuildPool(_cfg.QuoteCats, _cfg.CustomQuotes);
+            Quote q = QuoteBank.Pick(pool, _quoteText, _rand);
+            _quoteText = q == null ? "" : q.Text;
+            _quoteCredit = q == null ? "" : q.Credit;
+            int minutes = _cfg.QuoteMinutes;
+            if (minutes < 30) minutes = 30;
+            if (minutes > 1440) minutes = 1440;
+            _quoteNext = now.AddMinutes(minutes);
+            RenderFrame();
+        }
+
+        /// <summary>当前金句的署名，供设置页与状态显示。</summary>
+        public string CurrentQuoteCredit { get { return _quoteCredit; } }
+
+        public string CurrentQuoteText { get { return _quoteText; } }
 
         private void StartPomodoro(int mode)
         {
@@ -925,6 +975,7 @@ namespace FlatCat
             _settingsForm.ShotLassoRequested += delegate { DoShot(ShotMode.Lasso); };
             _settingsForm.RadioPlayRequested += delegate(RadioStation st) { PlayRadioFromSettings(st); };
             _settingsForm.RadioStopRequested += delegate { StopAudioFromSettings(); };
+            _settingsForm.RollQuoteRequested += delegate { RotateQuote(); };
             _settingsForm.MusicPickRequested += delegate { PickMusicFolder(); };
             _settingsForm.MusicPlayRequested += delegate(List<string> files, int index) { PlayMusicFromSettings(files, index); };
             _settingsForm.FormClosed += delegate
@@ -1003,6 +1054,33 @@ namespace FlatCat
                 RenderFrame();
             };
             root.DropDownItems.Add(kb);
+            root.DropDownItems.Add(new ToolStripSeparator());
+
+            // v1.6 头顶显示：时间与金句二选一
+            ToolStripMenuItem head = new ToolStripMenuItem("头顶显示");
+            string[] headNames = new string[] { "不显示", "当前时间", "金句" };
+            for (int i = 0; i < headNames.Length; i++)
+            {
+                int mode = i;
+                ToolStripMenuItem item = new ToolStripMenuItem(headNames[i]);
+                item.Checked = _cfg.HeadMode == mode;
+                item.Click += delegate
+                {
+                    _cfg.HeadMode = mode;
+                    _cfg.Save();
+                    MarkGroup(head, item);
+                    if (mode == 2) RotateQuote();
+                    RenderFrame();
+                };
+                head.DropDownItems.Add(item);
+            }
+            if (_cfg.HeadMode == 2)
+            {
+                ToolStripMenuItem roll = new ToolStripMenuItem("换一句金句");
+                roll.Click += delegate { RotateQuote(); };
+                head.DropDownItems.Add(roll);
+            }
+            root.DropDownItems.Add(head);
             return root;
         }
 

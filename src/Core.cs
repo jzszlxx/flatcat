@@ -180,6 +180,24 @@ namespace FlatCat
     #endregion
 
     #region 设置
+    /// <summary>用户自己添加/导入的一条金句。</summary>
+    [DataContract]
+    public class CustomQuote
+    {
+        [DataMember(Name = "t")] public string Text = "";
+        [DataMember(Name = "a")] public string Author = "";
+        [DataMember(Name = "s")] public string Source = "";
+
+        public CustomQuote() { }
+
+        public CustomQuote(string text, string author, string source)
+        {
+            Text = text;
+            Author = author == null ? "" : author;
+            Source = source == null ? "" : source;
+        }
+    }
+
     [DataContract]
     public class Settings
     {
@@ -221,7 +239,23 @@ namespace FlatCat
         [DataMember(Name = "accessory")] public int AccessoryId = 0;
         [DataMember(Name = "showSpots")] public bool ShowSpots = true;
         [DataMember(Name = "heterochromia")] public bool Heterochromia = false;
-        [DataMember(Name = "clockMode")] public bool ClockMode = false;
+        [DataMember(Name = "clockMode")] public bool ClockMode = false;   // v1.5 及以前：头顶常显时间；v1.6 起仅用于迁移
+
+        // v1.6 头顶显示三选一：0 = 不显示，1 = 时间，2 = 金句
+        [DataMember(Name = "headMode")] public int HeadMode = 0;
+        /// <summary>金句分类位掩码（1 哲思 / 2 诗句 / 4 金句），默认全开。</summary>
+        [DataMember(Name = "quoteCats")] public int QuoteCats = QuoteBank.CatAll;
+        /// <summary>金句更换间隔（分钟）：30 – 1440。</summary>
+        [DataMember(Name = "quoteMinutes")] public int QuoteMinutes = 60;
+        /// <summary>v1.6 字段落地标记（用途同 v14init / v15init）。</summary>
+        [DataMember(Name = "v16init")] public bool V16Init = false;
+
+        // v1.7 自定义金句与字体字号
+        [DataMember(Name = "customQuotes")] public List<CustomQuote> CustomQuotes = new List<CustomQuote>();
+        [DataMember(Name = "quoteFont")] public string QuoteFont = "Microsoft YaHei";
+        /// <summary>金句字号（像素）：12 – 20。</summary>
+        [DataMember(Name = "quoteFontSize")] public int QuoteFontSize = 15;
+        [DataMember(Name = "v17init")] public bool V17Init = false;
         [DataMember(Name = "totalPomodoros")] public int TotalPomodoros = 0;
         [DataMember(Name = "alertLog")] public List<string> AlertLog = new List<string>();
 
@@ -325,6 +359,22 @@ namespace FlatCat
                         s.QuietEnd = 8;
                         s.V15Init = true;
                     }
+                    if (!s.V16Init)
+                    {
+                        // v1.6：老配置里的「头顶常显时间」迁移成 HeadMode = 1，其余给默认
+                        if (s.ClockMode) s.HeadMode = 1;
+                        s.QuoteCats = QuoteBank.CatAll;
+                        s.QuoteMinutes = 60;
+                        s.V16Init = true;
+                    }
+                    if (!s.V17Init)
+                    {
+                        // v1.7：老配置没有自定义库与字体字号，字号会读成 0，这里补默认
+                        if (s.CustomQuotes == null) s.CustomQuotes = new List<CustomQuote>();
+                        if (string.IsNullOrEmpty(s.QuoteFont)) s.QuoteFont = "Microsoft YaHei";
+                        if (s.QuoteFontSize < 12 || s.QuoteFontSize > 20) s.QuoteFontSize = 15;
+                        s.V17Init = true;
+                    }
                     return s;
                 }
             }
@@ -342,6 +392,7 @@ namespace FlatCat
                 // 落盘前先打上字段落地标记，否则下次 Load 会把新字段当“老配置”再覆盖一次
                 V14Init = true;
                 V15Init = true;
+                V16Init = true;
                 using (FileStream fs = File.Create(FilePath))
                 {
                     DataContractJsonSerializer ser = new DataContractJsonSerializer(typeof(Settings));
@@ -393,6 +444,10 @@ namespace FlatCat
             SnoozeMinutes = other.SnoozeMinutes; AlarmSound = other.AlarmSound;
             AccessoryId = other.AccessoryId; ShowSpots = other.ShowSpots;
             Heterochromia = other.Heterochromia; ClockMode = other.ClockMode;
+            HeadMode = other.HeadMode; QuoteCats = other.QuoteCats; QuoteMinutes = other.QuoteMinutes;
+            QuoteFont = other.QuoteFont; QuoteFontSize = other.QuoteFontSize;
+            CustomQuotes = new List<CustomQuote>(
+                other.CustomQuotes == null ? new CustomQuote[0] : other.CustomQuotes.ToArray());
             TotalPomodoros = other.TotalPomodoros;
             AlertLog = new List<string>(other.AlertLog == null ? new string[0] : other.AlertLog.ToArray());
             CaptureHideCat = other.CaptureHideCat; CaptureDir = other.CaptureDir;
