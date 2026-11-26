@@ -37,6 +37,13 @@ namespace FlatCat
         /// <summary>第二实例唤起已有实例打开设置窗口。</summary>
         public const int WM_APP_SETTINGS = 0x8000 + 1;
 
+        /// <summary>全局热键消息。</summary>
+        public const int WM_HOTKEY = 0x0312;
+        public const uint MOD_ALT = 0x0001;
+        public const uint MOD_CONTROL = 0x0002;
+        public const uint MOD_SHIFT = 0x0004;
+        public const uint MOD_NOREPEAT = 0x4000;
+
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -114,6 +121,12 @@ namespace FlatCat
         [DllImport("user32.dll")] public static extern bool PostThreadMessage(uint idThread, uint Msg, IntPtr wParam, IntPtr lParam);
         [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
         [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
     }
     #endregion
 
@@ -222,9 +235,60 @@ namespace FlatCat
         /// <summary>v1.4 字段落地标记：老配置文件缺这些字段时，反序列化拿到的是 0/false 而不是初始值。</summary>
         [DataMember(Name = "v14init")] public bool V14Init = false;
 
+        // v1.5 全局热键与静默时段
+        [DataMember(Name = "hotkeys")] public bool Hotkeys = true;
+        [DataMember(Name = "quietEnabled")] public bool QuietEnabled = false;
+        [DataMember(Name = "quietStart")] public int QuietStart = 22;
+        [DataMember(Name = "quietEnd")] public int QuietEnd = 8;
+        /// <summary>v1.5 字段落地标记（用途同 v14init）。</summary>
+        [DataMember(Name = "v15init")] public bool V15Init = false;
+
+        /// <summary>便携模式标记文件名：放在 exe 同目录即启用，配置改存 exe 旁的 data\。</summary>
+        public const string PortableFlag = "flatcat.portable";
+
+        private static int _portable = -1;
+
+        public static bool IsPortable
+        {
+            get
+            {
+                if (_portable >= 0) return _portable == 1;
+                bool on = false;
+                try
+                {
+                    System.Reflection.Assembly asm = System.Reflection.Assembly.GetEntryAssembly();
+                    if (asm != null && !string.IsNullOrEmpty(asm.Location))
+                    {
+                        string exeDir = Path.GetDirectoryName(asm.Location);
+                        if (!string.IsNullOrEmpty(exeDir))
+                            on = File.Exists(Path.Combine(exeDir, PortableFlag));
+                    }
+                }
+                catch { }
+                _portable = on ? 1 : 0;
+                return on;
+            }
+        }
+
         public static string Dir
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlatCat"); }
+            get
+            {
+                if (IsPortable)
+                {
+                    try
+                    {
+                        System.Reflection.Assembly asm = System.Reflection.Assembly.GetEntryAssembly();
+                        if (asm != null && !string.IsNullOrEmpty(asm.Location))
+                        {
+                            string exeDir = Path.GetDirectoryName(asm.Location);
+                            if (!string.IsNullOrEmpty(exeDir)) return Path.Combine(exeDir, "data");
+                        }
+                    }
+                    catch { }
+                }
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlatCat");
+            }
         }
 
         public static string FilePath
@@ -253,6 +317,14 @@ namespace FlatCat
                         s.CaptureCopy = true;
                         s.V14Init = true;
                     }
+                    if (!s.V15Init)
+                    {
+                        // v1.5 新增热键与静默时段：老配置里 Hotkeys 会读成 false，得补回 true
+                        s.Hotkeys = true;
+                        s.QuietStart = 22;
+                        s.QuietEnd = 8;
+                        s.V15Init = true;
+                    }
                     return s;
                 }
             }
@@ -267,6 +339,9 @@ namespace FlatCat
             try
             {
                 if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
+                // 落盘前先打上字段落地标记，否则下次 Load 会把新字段当“老配置”再覆盖一次
+                V14Init = true;
+                V15Init = true;
                 using (FileStream fs = File.Create(FilePath))
                 {
                     DataContractJsonSerializer ser = new DataContractJsonSerializer(typeof(Settings));
@@ -337,6 +412,10 @@ namespace FlatCat
         public readonly Color Light;
         public readonly Color Pink;
         public readonly Color Eye;
+        // v1.5：色槽从 5 扩到 8，后三个由已有色派生，避免逐个手工填
+        public readonly Color Cheek;
+        public readonly Color Pad;
+        public readonly Color Nose;
 
         public Coat(string name, int fur, int dark, int light, int pink, int eye)
         {
@@ -347,6 +426,18 @@ namespace FlatCat
             Light = FromRgb(light);
             Pink = FromRgb(pink);
             Eye = FromRgb(eye);
+
+            Cheek = Blend(Pink, Color.FromArgb(232, 138, 130), 0.45f);
+            Pad = Blend(Light, Pink, 0.52f);
+            Nose = Blend(Pink, Color.FromArgb(126, 92, 88), 0.42f);
+        }
+
+        private static Color Blend(Color a, Color b, float t)
+        {
+            return Color.FromArgb(
+                (int)(a.R + (b.R - a.R) * t),
+                (int)(a.G + (b.G - a.G) * t),
+                (int)(a.B + (b.B - a.B) * t));
         }
 
         private static Color FromRgb(int rgb)
@@ -462,6 +553,17 @@ namespace FlatCat
     #region 计时工具
     internal static class Reminder
     {
+        /// <summary>静默时段判定：支持跨午夜（22 → 8）；起止相同视为未启用。</summary>
+        public static bool InQuiet(bool enabled, int startHour, int endHour, int hour)
+        {
+            if (!enabled) return false;
+            int s = startHour < 0 ? 0 : (startHour > 23 ? 23 : startHour);
+            int e = endHour < 0 ? 0 : (endHour > 23 ? 23 : endHour);
+            if (s == e) return false;
+            if (s < e) return hour >= s && hour < e;
+            return hour >= s || hour < e;
+        }
+
         /// <summary>把剩余秒数格式化成 24:59 / 1:05:00 这样的时钟串。</summary>
         public static string Clock(int totalSeconds)
         {
@@ -703,6 +805,30 @@ namespace FlatCat
         public float BodyDip;
         public float PurrWobble;
 
+        // ---- v1.5 表情通道与二级动作 ----
+        /// <summary>笑眼：>0 时眼睛画成上弯弧，值越大越弯。</summary>
+        public float EyeHappy;
+        /// <summary>惊讶圆睁：放大眼白、缩小瞳孔。</summary>
+        public float EyeWide;
+        /// <summary>眉毛：-1 压低（生气/困），+1 上抬（惊讶）。</summary>
+        public float Brow;
+        /// <summary>嘴角上扬（0 平 / 1 笑）。</summary>
+        public float MouthSmile;
+        /// <summary>张嘴幅度（0 闭 / 1 大张）。</summary>
+        public float MouthOpen;
+        /// <summary>吐舌程度。</summary>
+        public float Tongue;
+        /// <summary>腮红浓度。</summary>
+        public float Cheek;
+        /// <summary>耳朵整体转向：正值向后压，负值向前竖。</summary>
+        public float EarAngle;
+        /// <summary>头部水平偏移，模拟转头。</summary>
+        public float HeadYaw;
+        /// <summary>落地压扁量（0 正常 / 1 压扁）。</summary>
+        public float Squash;
+        /// <summary>身体前倾。</summary>
+        public float BodyLean;
+
         public static CatAnim ForState(string state)
         {
             CatAnim a = new CatAnim();
@@ -713,18 +839,28 @@ namespace FlatCat
                     break;
                 case "sleep":
                     a.EyeOpen = 0f; a.Sleep = 1f; a.BodyDip = 1f; a.HeadTilt = 8f; a.Breathe = 0.15f;
+                    a.EarAngle = 4f; a.MouthOpen = 0f;
                     break;
                 case "pet":
-                    a.EyeOpen = 0.12f; a.HeadTilt = -5f; a.EarTwitch = 1f; a.PurrWobble = 1f;
+                    a.EyeOpen = 0.18f; a.EyeHappy = 1f; a.MouthSmile = 0.7f; a.Cheek = 0.85f;
+                    a.HeadTilt = -5f; a.EarTwitch = 1f; a.EarAngle = 6f; a.PurrWobble = 1f;
                     break;
                 case "alert":
-                    a.EyeOpen = 1f; a.HeadTilt = -3f; a.EarTwitch = 1f;
+                    a.EyeOpen = 1f; a.EyeWide = 1f; a.MouthOpen = 0.45f;
+                    a.HeadTilt = -3f; a.EarTwitch = 1f; a.EarAngle = -10f;
                     break;
                 case "lick":
-                    a.LeftPaw = 0.85f; a.HeadTilt = -9f; a.EyeOpen = 0.5f;
+                    a.LeftPaw = 0.85f; a.HeadTilt = -9f; a.EyeOpen = 0.5f; a.Tongue = 0.85f;
                     break;
                 case "watch":
                     a.PupilX = 0.9f; a.HeadTilt = 4f;
+                    break;
+                case "happy":
+                    a.EyeHappy = 1f; a.EyeOpen = 0.2f; a.MouthSmile = 1f;
+                    a.MouthOpen = 0.35f; a.Cheek = 1f;
+                    break;
+                case "yawn":
+                    a.MouthOpen = 0.95f; a.EyeOpen = 0.1f; a.HeadTilt = 9f; a.Tongue = 0.4f;
                     break;
                 default:
                     a.Breathe = 0.6f; a.TailAngle = 6f;

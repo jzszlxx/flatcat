@@ -155,7 +155,19 @@ namespace FlatCat
         private static void DrawBody(Graphics g, CatAnim a, float dip, Coat coat, bool spots)
         {
             GraphicsState st = g.Save();
-            g.TranslateTransform(0, dip);
+            if (a.Squash > 0.01f || Math.Abs(a.BodyLean) > 0.01f)
+            {
+                // 落地压扁：横向变宽、纵向变矮；前倾时整体横向偏移
+                float sx = 1f + 0.10f * a.Squash;
+                float sy = 1f - 0.14f * a.Squash;
+                g.TranslateTransform(160f + a.BodyLean * 7f, 206f + dip);
+                g.ScaleTransform(sx, sy);
+                g.TranslateTransform(-160f, -206f);
+            }
+            else
+            {
+                g.TranslateTransform(0, dip);
+            }
 
             FillEllipse(g, coat.Fur, 102, 220, 60, 54);
             FillEllipse(g, coat.Fur, 158, 220, 60, 54);
@@ -235,7 +247,13 @@ namespace FlatCat
             using (GraphicsPath paw = new GraphicsPath())
             {
                 paw.AddEllipse(-3, 44, 34, 20);
-                using (SolidBrush b = new SolidBrush(coat.Light)) g.FillPath(b, paw);
+                using (SolidBrush b = new SolidBrush(coat.Pad)) g.FillPath(b, paw);
+            }
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(115, 255, 252, 246)))
+            {
+                g.FillEllipse(b, 5f, 50f, 5f, 5f);
+                g.FillEllipse(b, 12.5f, 49f, 5f, 5f);
+                g.FillEllipse(b, 20f, 50f, 5f, 5f);
             }
             using (Pen pen = new Pen(Color.FromArgb(60, coat.FurDark), 1.5f))
             {
@@ -249,11 +267,13 @@ namespace FlatCat
         private static void DrawHead(Graphics g, CatAnim a, float dip, Coat coat, bool hetero, int accessory)
         {
             GraphicsState st = g.Save();
-            g.TranslateTransform(HeadCx, HeadCy + dip * 3.2f);
+            // HeadYaw：转头时头和脖子错开一点，避免整颗头平移显得假
+            g.TranslateTransform(HeadCx + a.HeadYaw * 1.3f, HeadCy + dip * 3.2f + a.Squash * 6f);
             g.RotateTransform(a.HeadTilt);
+            if (a.Squash > 0.01f) g.ScaleTransform(1f + 0.06f * a.Squash, 1f - 0.09f * a.Squash);
 
-            DrawEar(g, -1f, a.EarTwitch, coat);
-            DrawEar(g, 1f, a.EarTwitch, coat);
+            DrawEar(g, -1f, a.EarTwitch, a.EarAngle, coat);
+            DrawEar(g, 1f, a.EarTwitch, a.EarAngle, coat);
 
             using (SolidBrush b = new SolidBrush(coat.Fur))
                 g.FillEllipse(b, -56, -50, 112, 102);
@@ -274,20 +294,7 @@ namespace FlatCat
             DrawEye(g, a, -1, coat, coat.Eye);
             DrawEye(g, a, 1, coat, hetero ? odd : coat.Eye);
 
-            using (GraphicsPath p = new GraphicsPath())
-            {
-                p.AddPolygon(new PointF[] { new PointF(-6.5f, 16f), new PointF(6.5f, 16f), new PointF(0f, 24f) });
-                using (SolidBrush b = new SolidBrush(coat.Pink)) g.FillPath(b, p);
-            }
-
-            using (Pen pen = new Pen(Ink, 1.7f))
-            {
-                pen.StartCap = LineCap.Round;
-                pen.EndCap = LineCap.Round;
-                g.DrawLine(pen, 0, 24, 0, 27);
-                g.DrawArc(pen, -9, 25, 9, 7, 0, 180);
-                g.DrawArc(pen, 0, 25, 9, 7, 0, 180);
-            }
+            DrawFace(g, a, coat);
 
             using (Pen pen = new Pen(Color.FromArgb(80, Ink), 1.5f))
             {
@@ -300,6 +307,79 @@ namespace FlatCat
 
             if (accessory == 4) DrawGlasses(g);
             g.Restore(st);
+        }
+
+        /// <summary>鼻子、嘴、舌头、腮红、眉毛。</summary>
+        private static void DrawFace(Graphics g, CatAnim a, Coat coat)
+        {
+            // 腮红
+            if (a.Cheek > 0.02f)
+            {
+                int alpha = (int)(78f * a.Cheek);
+                if (alpha > 90) alpha = 90;
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(alpha, coat.Cheek)))
+                {
+                    g.FillEllipse(b, -41f, 6f, 21f, 12f);
+                    g.FillEllipse(b, 20f, 6f, 21f, 12f);
+                }
+            }
+
+            // 鼻子
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                p.AddPolygon(new PointF[] { new PointF(-6.5f, 16f), new PointF(6.5f, 16f), new PointF(0f, 24f) });
+                using (SolidBrush b = new SolidBrush(coat.Nose)) g.FillPath(b, p);
+            }
+
+            float smile = a.MouthSmile;
+            float open = a.MouthOpen;
+            using (Pen pen = new Pen(Ink, 1.7f))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawLine(pen, 0, 24, 0, 26.5f);
+            }
+
+            if (open < 0.1f)
+            {
+                // 闭嘴：嘴角随 smile 上扬
+                float lift = 2.6f * smile;
+                using (Pen pen = new Pen(Ink, 1.7f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawArc(pen, -9f, 24.5f - lift, 9f, 7f + lift, 0, 180);
+                    g.DrawArc(pen, 0f, 24.5f - lift, 9f, 7f + lift, 0, 180);
+                }
+            }
+            else
+            {
+                // 张嘴：椭圆口，舌头顶在下唇
+                float h = 3f + 13f * open;
+                float w = 9f + 5f * open;
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(190, 64, 42, 38)))
+                    g.FillEllipse(b, -w, 23f, w * 2f, h);
+                if (a.Tongue > 0.04f)
+                {
+                    float tw = 3f + 4.5f * a.Tongue;
+                    float th = 2f + 4f * a.Tongue;
+                    using (SolidBrush b = new SolidBrush(coat.Pink))
+                        g.FillEllipse(b, -tw, 23f + h - th * 0.9f, tw * 2f, th);
+                }
+            }
+
+            // 眉毛
+            if (Math.Abs(a.Brow) > 0.04f)
+            {
+                float lift = 3.4f * a.Brow;
+                using (Pen pen = new Pen(Color.FromArgb(170, Ink.R, Ink.G, Ink.B), 2.2f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawLine(pen, -34f, -17f - lift, -17f, -20.5f - lift * 0.6f);
+                    g.DrawLine(pen, 17f, -20.5f - lift * 0.6f, 34f, -17f - lift);
+                }
+            }
         }
 
         /// <summary>异瞳色：原色偏蓝就换成金色，否则换成蓝色，保证两只眼明显不同。</summary>
@@ -389,11 +469,12 @@ namespace FlatCat
             }
         }
 
-        private static void DrawEar(Graphics g, float side, float twitch, Coat coat)
+        private static void DrawEar(Graphics g, float side, float twitch, float earAngle, Coat coat)
         {
             GraphicsState st = g.Save();
             g.ScaleTransform(side, 1f);
-            g.RotateTransform(-twitch * 6f);
+            // earAngle 正值向后压（折耳），负值向前竖；twitch 是摸头时的小幅抖动
+            g.RotateTransform(-twitch * 6f + earAngle * 1.35f);
 
             using (GraphicsPath p = new GraphicsPath())
             {
@@ -412,24 +493,49 @@ namespace FlatCat
         {
             float cx = 24f * side;
             float cy = -3f;
+
+            // 笑眼：整只眼画成上弯弧，不再画眼球
+            if (a.EyeHappy > 0.55f)
+            {
+                using (Pen pen = new Pen(Ink, 3.2f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawArc(pen, cx - 11f, cy - 1f, 22f, 16f, 200, 140);
+                }
+                return;
+            }
+
             float open = a.EyeOpen;
             if (open < 0.03f) open = 0.03f;
             if (open > 1f) open = 1f;
-            float ry = 16f * open;
+
+            float wide = a.EyeWide;
+            if (wide < 0f) wide = 0f;
+            if (wide > 1f) wide = 1f;
+
+            float rx = 14f + 2.6f * wide;
+            float ry = 16f * open * (1f + 0.15f * wide);
 
             using (SolidBrush b = new SolidBrush(eyeColor))
-                g.FillEllipse(b, cx - 14f, cy - ry, 28f, ry * 2f);
+                g.FillEllipse(b, cx - rx, cy - ry, rx * 2f, ry * 2f);
 
             float px = cx + a.PupilX * 4.5f;
             float py = cy + a.PupilY * 4.5f;
-            float prx = 4.6f;
-            float pry = 9f * open;
-            if (pry < 1.6f) pry = 1.6f;
+            float prx = 4.6f * (1f - 0.32f * wide);
+            float pry = 9f * open * (1f - 0.28f * wide);
+            if (pry < 1.4f) pry = 1.4f;
             using (SolidBrush b = new SolidBrush(Ink))
                 g.FillEllipse(b, px - prx, py - pry, prx * 2f, pry * 2f);
 
             using (SolidBrush b = new SolidBrush(Color.FromArgb(235, 255, 255, 250)))
                 g.FillEllipse(b, px - 3.6f, py - pry * 0.72f, 3.4f, 3.4f);
+
+            if (wide > 0.3f)
+            {
+                using (Pen pen = new Pen(Color.FromArgb(120, 255, 255, 255), 1.5f))
+                    g.DrawEllipse(pen, cx - rx + 1.2f, cy - ry + 1.2f, rx * 2f - 2.4f, ry * 2f - 2.4f);
+            }
 
             if (open < 0.22f)
             {

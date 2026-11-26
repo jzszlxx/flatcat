@@ -37,6 +37,12 @@ namespace FlatCat
                 RenderCoats(args[1]);
                 return;
             }
+            if (args.Length >= 2 && args[0] == "--faces")
+            {
+                RenderFaces(args[1]);
+                return;
+            }
+
             if (args.Length >= 2 && args[0] == "--selftest")
             {
                 SelfTest(args[1]);
@@ -67,6 +73,29 @@ namespace FlatCat
                 }
                 Application.Run(form);
                 GC.KeepAlive(mtx);
+            }
+        }
+
+        /// <summary>六格表情图：正常 / 开心 / 惊讶 / 打哈欠 / 摸头 / 睡着。</summary>
+        private static void RenderFaces(string path)
+        {
+            string[] states = new string[] { "idle", "happy", "alert", "yawn", "pet", "sleep" };
+            const int cell = 240;
+            using (Bitmap bmp = new Bitmap(cell * states.Length, cell, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.FromArgb(255, 244, 238, 228));
+                    for (int i = 0; i < states.Length; i++)
+                    {
+                        g.ResetTransform();
+                        g.TranslateTransform(i * cell, 0);
+                        g.ScaleTransform(0.75f, 0.75f);
+                        CatAnim a = CatAnim.ForState(states[i]);
+                        CatPainter.Draw(g, a, false, Coats.All[0], 0, true, false);
+                    }
+                }
+                bmp.Save(path, ImageFormat.Png);
             }
         }
 
@@ -231,6 +260,10 @@ namespace FlatCat
             probe.ClockMode = true;
             probe.TotalPomodoros = 42;
             probe.AlertLog.Add("12:00  测试提醒");
+            probe.Hotkeys = false;
+            probe.QuietEnabled = true;
+            probe.QuietStart = 23;
+            probe.QuietEnd = 7;
             bool saved = probe.Save();
             Settings back = Settings.Load();
             bool roundTrip = Math.Abs(back.Scale - 1.25) < 1e-9
@@ -276,15 +309,89 @@ namespace FlatCat
             lines.Add("settings.extra_fields = " + (extraOk ? "PASS" : "FAIL"));
             if (!extraOk) fails++;
 
+            // v1.5 新增字段往返
+            bool v15Fields = !back.Hotkeys && back.QuietEnabled
+                             && back.QuietStart == 23 && back.QuietEnd == 7;
+            lines.Add("settings.v15_fields = " + (v15Fields ? "PASS" : "FAIL"));
+            if (!v15Fields) fails++;
+
+            // v1.5 静默时段闸门：跨午夜、同侧、起止相同（视为关闭）
+            bool quietOk = Reminder.InQuiet(true, 22, 8, 23)
+                        && Reminder.InQuiet(true, 22, 8, 3)
+                        && !Reminder.InQuiet(true, 22, 8, 12)
+                        && !Reminder.InQuiet(true, 22, 8, 8)
+                        && Reminder.InQuiet(true, 13, 14, 13)
+                        && !Reminder.InQuiet(true, 13, 14, 14)
+                        && !Reminder.InQuiet(false, 22, 8, 23)
+                        && !Reminder.InQuiet(true, 9, 9, 9);
+            lines.Add("quiet.gate = " + (quietOk ? "PASS" : "FAIL"));
+            if (!quietOk) fails++;
+
+            // v1.5 便携模式：没放标记文件时必须落在漫游目录
+            string roaming = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlatCat");
+            bool portableOk = Settings.IsPortable
+                ? Settings.Dir.EndsWith("\\data", StringComparison.OrdinalIgnoreCase)
+                : string.Equals(Settings.Dir, roaming, StringComparison.OrdinalIgnoreCase);
+            lines.Add("settings.portable = " + (portableOk ? "PASS" : "FAIL")
+                      + " (" + (Settings.IsPortable ? "portable" : "roaming") + ")");
+            if (!portableOk) fails++;
+
+            // v1.5 全局热键：真注册一遍再注销，验证 4 个组合都抢得到
+            int hkOk = 0;
+            string hkSet = "-";
+            string hkErr = "";
+            try
+            {
+                using (Form hkWin = new Form())
+                {
+                    hkWin.ShowInTaskbar = false;
+                    hkWin.FormBorderStyle = FormBorderStyle.None;
+                    hkWin.StartPosition = FormStartPosition.Manual;
+                    hkWin.SetBounds(-32000, -32000, 8, 8);
+                    hkWin.Show();
+                    int[] ids = new int[] { 2101, 2102, 2103, 2104 };
+                    uint[] vks = new uint[] { 0x53, 0x52, 0x4C, 0x50 };
+                    uint[] combos = new uint[]
+                    {
+                        Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT,
+                        Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_SHIFT | Native.MOD_NOREPEAT
+                    };
+                    string[] names = new string[] { "Ctrl+Alt", "Ctrl+Shift+Alt" };
+                    for (int c = 0; c < combos.Length; c++)
+                    {
+                        hkOk = 0;
+                        for (int i = 0; i < 4; i++)
+                        {
+                            if (Native.RegisterHotKey(hkWin.Handle, ids[i], combos[c], vks[i])) hkOk++;
+                        }
+                        for (int i = 0; i < 4; i++) Native.UnregisterHotKey(hkWin.Handle, ids[i]);
+                        hkSet = names[c] + " " + hkOk + "/4";
+                        if (hkOk == 4) break;
+                    }
+                }
+            }
+            catch (Exception ex) { hkErr = ex.GetType().Name; }
+            lines.Add("hotkey.register = " + (hkOk == 4 ? "PASS" : "FAIL")
+                      + " (" + hkSet + (hkErr.Length > 0 ? " " + hkErr : "") + ")");
+            if (hkOk != 4) fails++;
+
             // 设置窗口能否正常构造（布局或控件字段出错时这里会抛异常）
             try
             {
                 SettingsForm probeForm = new SettingsForm(new Settings(), null);
                 int ctrlCount = probeForm.Controls.Count;
+                int navCount = probeForm.NavCount;
+                string navTitles = string.Join("/", probeForm.NavTitles);
+                lines.Add("ui.client = " + probeForm.ClientSize.Width + "x" + probeForm.ClientSize.Height);
                 probeForm.Dispose();
                 lines.Add("settings.form_build = " + (ctrlCount > 0 ? "PASS" : "FAIL")
                           + " (controls=" + ctrlCount + ")");
                 if (ctrlCount <= 0) fails++;
+                // v1.5 UI 壳：左导航要列出 6 个页签，空壳等于没做
+                bool navOk = navCount == 6;
+                lines.Add("ui.nav_items = " + (navOk ? "PASS" : "FAIL") + " (" + navCount + " " + navTitles + ")");
+                if (!navOk) fails++;
             }
             catch (Exception ex)
             {
@@ -472,13 +579,22 @@ namespace FlatCat
             if (!heteroOk) fails++;
 
             // 截图：抓取 / 裁剪 / 落盘
+            // 抓屏依赖可见桌面：RDP 断开时 CopyFromScreen 会抛“句柄无效”，这种情况标 SKIP 而不是 FAIL
             bool grabOk = false;
-            using (Bitmap grab = Shot.Grab(new Rectangle(0, 0, 200, 120)))
+            string grabNote = "";
+            try
             {
-                grabOk = grab.Width == 200 && grab.Height == 120;
+                using (Bitmap grab = Shot.Grab(new Rectangle(0, 0, 200, 120)))
+                {
+                    grabOk = grab.Width == 200 && grab.Height == 120;
+                }
             }
-            lines.Add("capture.grab = " + (grabOk ? "PASS" : "FAIL"));
-            if (!grabOk) fails++;
+            catch (Exception ex)
+            {
+                grabNote = "SKIP(桌面不可抓屏 " + ex.GetType().Name + ")";
+            }
+            lines.Add("capture.grab = " + (grabNote.Length > 0 ? grabNote : (grabOk ? "PASS" : "FAIL")));
+            if (grabNote.Length == 0 && !grabOk) fails++;
 
             bool cropOk = false;
             using (Bitmap canvas = new Bitmap(200, 200, PixelFormat.Format32bppArgb))

@@ -31,6 +31,8 @@ namespace FlatCat
         private AudioPlayer _audio;
         private bool _shotBusy;
         private int _tickCount;
+        private readonly Animator _animator = new Animator();
+        private float _lastIdleActionAt = -100f;
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private readonly Random _rand = new Random();
         private double _lastTick;
@@ -89,6 +91,14 @@ namespace FlatCat
 
         private int _winX;
         private int _winY;
+
+        // v1.5 全局热键：Ctrl+Alt + S/R/L/P
+        private const int HK_FULL = 1001;
+        private const int HK_RECT = 1002;
+        private const int HK_LASSO = 1003;
+        private const int HK_MUSIC = 1004;
+        private readonly List<int> _hotkeysOn = new List<int>();
+        private string _hotkeyHint = "";
 
         public PetForm(Settings cfg)
         {
@@ -445,8 +455,14 @@ namespace FlatCat
             _alertText = text;
             _alertUntil = DateTime.Now.AddSeconds(9);
             _lastActivity = DateTime.Now;
-            PlayAlert(sound);
+            // v1.5 静默时段：到点只把声音吞掉，气泡和日志照旧，免得错过提醒
+            PlayAlert(QuietNow() ? 2 : sound);
             LogAlert(text);
+        }
+
+        private bool QuietNow()
+        {
+            return Reminder.InQuiet(_cfg.QuietEnabled, _cfg.QuietStart, _cfg.QuietEnd, DateTime.Now.Hour);
         }
 
         /// <summary>0 = 系统提示音，1 = 猫叫，2 = 静音。</summary>
@@ -532,19 +548,8 @@ namespace FlatCat
             if (_cfg.LeftHanded) isLeft = !isLeft;
             bool space = vk == 0x20;
 
-            if (space)
-            {
-                _anim.LeftPaw = 1f;
-                _anim.RightPaw = 1f;
-            }
-            else if (isLeft)
-            {
-                _anim.LeftPaw = 1f;
-            }
-            else
-            {
-                _anim.RightPaw = 1f;
-            }
+            // 抬爪交给片段系统：一次性片段自带回弹，松手后自然落下
+            _animator.Play(AnimLib.ByName(space ? AnimLib.TypeBoth : (isLeft ? AnimLib.TypeLeft : AnimLib.TypeRight)));
 
             if (_cfg.ShowKeyLabels)
             {
@@ -572,6 +577,7 @@ namespace FlatCat
             else if (_state == "sleep" && idleMin < _cfg.SleepMinutes)
             {
                 _state = "idle";
+                _animator.Play(AnimLib.ByName(AnimLib.Wake));
             }
 
             if (_state == "typing" && DateTime.Now >= _pawRelease) _state = "idle";
@@ -611,9 +617,23 @@ namespace FlatCat
 
             bool sleeping = _state == "sleep";
             bool alerting = DateTime.Now < _alertUntil;
-            float sinceIdleAction = t - _idleActionAt;
-            bool licking = _cfg.IdleActions && _state == "idle" && sinceIdleAction < 1.3f && _idleActionKind == 0;
-            bool tilting = _cfg.IdleActions && _state == "idle" && sinceIdleAction < 1.6f && _idleActionKind == 1;
+
+            // 闲置小动作刚被触发时，播一次对应的一次性片段
+            if (_idleActionAt != _lastIdleActionAt)
+            {
+                _lastIdleActionAt = _idleActionAt;
+                if (_cfg.IdleActions && _state == "idle")
+                    _animator.Play(AnimLib.ByName(_idleActionKind == 0 ? AnimLib.Lick : AnimLib.Tilt));
+            }
+
+            // 状态 → 基础循环片段
+            string baseName = AnimLib.Idle;
+            if (sleeping) baseName = AnimLib.Sleep;
+            else if (_petting) baseName = AnimLib.Pet;
+            else if (alerting) baseName = AnimLib.Alert;
+            else if (_dragging) baseName = AnimLib.Drag;
+            _animator.SetBase(AnimLib.ByName(baseName));
+            _animator.Update(dt);
 
             float breatheSpeed = sleeping ? 0.85f : (alerting ? 2.2f : 1.7f);
             _anim.Breathe = (float)((Math.Sin(t * breatheSpeed * Math.PI) + 1.0) * 0.5);
@@ -626,13 +646,24 @@ namespace FlatCat
             }
             bool blinking = (t - _blinkAt) < 0.11f;
 
-            float eyeTarget = 1f;
-            if (sleeping) eyeTarget = 0.04f;
-            else if (_petting) eyeTarget = 0.1f;
-            else if (blinking && !alerting) eyeTarget = 0.08f;
-            else if (licking) eyeTarget = 0.45f;
+            // ---- 表情通道
+            float happy = _animator.Get("eyeHappy", 0f);
+            float eyeTarget = _animator.Get("eyeOpen", 1f);
+            if (happy < 0.55f)
+            {
+                if (blinking && !alerting) eyeTarget = Math.Min(eyeTarget, 0.08f);
+                if (_petting) eyeTarget = Math.Min(eyeTarget, 0.18f);
+            }
             _anim.EyeOpen = Lerp(_anim.EyeOpen, eyeTarget, blinking ? fast * 3f : fast);
+            _anim.EyeHappy = Lerp(_anim.EyeHappy, happy, slow);
+            _anim.EyeWide = Lerp(_anim.EyeWide, _animator.Get("eyeWide", 0f), slow);
+            _anim.Brow = Lerp(_anim.Brow, _animator.Get("brow", 0f), slow);
+            _anim.MouthSmile = Lerp(_anim.MouthSmile, _animator.Get("mouthSmile", 0f), slow);
+            _anim.MouthOpen = Lerp(_anim.MouthOpen, _animator.Get("mouthOpen", 0f), fast);
+            _anim.Tongue = Lerp(_anim.Tongue, _animator.Get("tongue", 0f), fast);
+            _anim.Cheek = Lerp(_anim.Cheek, _animator.Get("cheek", 0f), slow);
 
+            // ---- 瞳孔跟随鼠标（片段可覆盖）
             Native.POINT p;
             Native.GetCursorPos(out p);
             float hx = _winX + CatPainter.HeadCx * _scaleTotal;
@@ -641,36 +672,30 @@ namespace FlatCat
             float ty = (p.Y - hy) / (260f * _scaleTotal);
             if (tx > 1f) tx = 1f; if (tx < -1f) tx = -1f;
             if (ty > 1f) ty = 1f; if (ty < -1f) ty = -1f;
+            if (sleeping || _petting || happy > 0.55f) { tx = 0f; ty = 0f; }
 
-            if (sleeping || _petting || licking) { tx = 0f; ty = 0f; }
-            _anim.PupilX = Lerp(_anim.PupilX, tx, slow);
-            _anim.PupilY = Lerp(_anim.PupilY, ty, slow);
+            _anim.PupilX = Lerp(_anim.PupilX, _animator.Get("pupilX", tx), slow);
+            _anim.PupilY = Lerp(_anim.PupilY, _animator.Get("pupilY", ty), slow);
 
-            float tiltTarget = 0f;
-            if (sleeping) tiltTarget = 8f;
-            else if (_petting) tiltTarget = -4f + (float)Math.Sin(t * 6.0) * 1.6f;
-            else if (alerting) tiltTarget = -3f;
-            else if (licking) tiltTarget = -11f;
-            else if (tilting) tiltTarget = 9f;
-            else tiltTarget = _anim.PupilX * 4.5f;
-            _anim.HeadTilt = Lerp(_anim.HeadTilt, tiltTarget, slow);
+            // ---- 头与二级动作
+            float headFallback = _anim.PupilX * 4.5f;
+            _anim.HeadTilt = Lerp(_anim.HeadTilt, _animator.Get("headTilt", headFallback), slow);
+            _anim.HeadYaw = Lerp(_anim.HeadYaw, _animator.Get("headYaw", 0f), slow);
 
-            if (DateTime.Now >= _pawRelease)
-            {
-                _anim.LeftPaw = Lerp(_anim.LeftPaw, licking ? 0.8f : 0f, fast);
-                _anim.RightPaw = Lerp(_anim.RightPaw, 0f, fast);
-            }
+            _anim.LeftPaw = Lerp(_anim.LeftPaw, _animator.Get("leftPaw", 0f), fast);
+            _anim.RightPaw = Lerp(_anim.RightPaw, _animator.Get("rightPaw", 0f), fast);
 
-            float tailTarget = (float)Math.Sin(t * (sleeping ? 0.6f : (alerting ? 3.0f : 1.1f))) * (sleeping ? 3f : (alerting ? 12f : 9f));
-            if (_state == "typing") tailTarget += 6f;
-            _anim.TailAngle = Lerp(_anim.TailAngle, tailTarget, slow);
+            float tailBase = _animator.Get("tailAngle", 0f);
+            if (_state == "typing") tailBase += 4f;
+            _anim.TailAngle = Lerp(_anim.TailAngle, tailBase, slow);
 
-            float earTarget = _petting ? 1f : (alerting ? 0.85f : (tilting ? 0.6f : 0f));
-            _anim.EarTwitch = Lerp(_anim.EarTwitch, earTarget, slow);
+            _anim.EarAngle = Lerp(_anim.EarAngle, _animator.Get("earAngle", 0f), slow);
+            _anim.EarTwitch = Lerp(_anim.EarTwitch, _petting ? 1f : (alerting ? 0.7f : 0f), slow);
 
-            float dipTarget = sleeping ? 1f : 0f;
-            _anim.BodyDip = Lerp(_anim.BodyDip, dipTarget, slow);
-
+            _anim.Sleep = Lerp(_anim.Sleep, _animator.Get("sleep", 0f), slow);
+            _anim.BodyDip = Lerp(_anim.BodyDip, _animator.Get("bodyDip", 0f), slow);
+            _anim.Squash = Lerp(_anim.Squash, _animator.Get("squash", 0f), fast);
+            _anim.BodyLean = Lerp(_anim.BodyLean, _animator.Get("bodyLean", 0f), slow);
             _anim.PurrWobble = _petting ? (float)(Math.Sin(t * 22.0) * 0.5 + 0.5) : 0f;
 
             if (_wheelFlash > 0) _wheelFlash--;
@@ -703,11 +728,68 @@ namespace FlatCat
         #endregion
 
         #region 交互
+        /// <summary>注册 v1.5 全局热键；优先 Ctrl+Alt，被占用时整组退到 Ctrl+Shift+Alt。</summary>
+        private void RegisterHotkeys()
+        {
+            UnregisterHotkeys();
+            _hotkeyHint = "";
+            if (!_cfg.Hotkeys || !IsHandleCreated) { _hotkeyHint = "已关闭"; return; }
+
+            uint primary = Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT;
+            Hotkey(HK_FULL, 0x53, primary);   // S 全屏
+            Hotkey(HK_RECT, 0x52, primary);   // R 矩形
+            Hotkey(HK_LASSO, 0x4C, primary);  // L 套索
+            Hotkey(HK_MUSIC, 0x50, primary);  // P 播放/暂停
+            if (_hotkeysOn.Count == 4) { _hotkeyHint = "Ctrl+Alt"; return; }
+
+            // 有键被别的程序占了：整组换 Ctrl+Shift+Alt 再试一次
+            UnregisterHotkeys();
+            uint safe = primary | Native.MOD_SHIFT;
+            Hotkey(HK_FULL, 0x53, safe);
+            Hotkey(HK_RECT, 0x52, safe);
+            Hotkey(HK_LASSO, 0x4C, safe);
+            Hotkey(HK_MUSIC, 0x50, safe);
+            _hotkeyHint = _hotkeysOn.Count == 4 ? "Ctrl+Shift+Alt" : "部分可用(" + _hotkeysOn.Count + "/4)";
+        }
+
+        private void Hotkey(int id, uint vk, uint mods)
+        {
+            if (Native.RegisterHotKey(Handle, id, mods, vk)) _hotkeysOn.Add(id);
+        }
+
+        private void UnregisterHotkeys()
+        {
+            for (int i = 0; i < _hotkeysOn.Count; i++) Native.UnregisterHotKey(Handle, _hotkeysOn[i]);
+            _hotkeysOn.Clear();
+        }
+
+        /// <summary>当前成功占用的热键数，供状态栏与自检读取。</summary>
+        public int HotkeyCount { get { return _hotkeysOn.Count; } }
+
+        private void OnHotkey(int id)
+        {
+            if (id == HK_FULL) { if (!_shotBusy) DoShot(ShotMode.FullScreen); }
+            else if (id == HK_RECT) { if (!_shotBusy) DoShot(ShotMode.Rect); }
+            else if (id == HK_LASSO) { if (!_shotBusy) DoShot(ShotMode.Lasso); }
+            else if (id == HK_MUSIC)
+            {
+                if (_audio == null) return;
+                if (_audio.IsPlaying) _audio.Pause();
+                else if (!string.IsNullOrEmpty(_audio.Title)) _audio.Resume();
+            }
+        }
+
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == Native.WM_APP_SETTINGS)
             {
                 BeginInvoke((MethodInvoker)delegate { OpenSettings(); });
+                return;
+            }
+            if (m.Msg == Native.WM_HOTKEY)
+            {
+                int id = m.WParam.ToInt32();
+                BeginInvoke((MethodInvoker)delegate { OnHotkey(id); });
                 return;
             }
             base.WndProc(ref m);
@@ -783,6 +865,7 @@ namespace FlatCat
                 _cfg.X = _winX;
                 _cfg.Y = _winY;
                 _cfg.Save();
+                _animator.Play(AnimLib.ByName(AnimLib.Drop));
             }
         }
 
@@ -794,6 +877,7 @@ namespace FlatCat
                 ToggleVisible();
                 return;
             }
+            UnregisterHotkeys();
             base.OnFormClosing(e);
         }
         #endregion
@@ -805,6 +889,7 @@ namespace FlatCat
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            RegisterHotkeys();
             if (StartPage >= 0) OpenSettingsAt(StartPage);
         }
 
@@ -854,7 +939,11 @@ namespace FlatCat
         {
             ApplyScale();
             SetAutostart(s.Autostart);
+            RegisterHotkeys();
             RenderFrame();
+            if (_settingsForm != null)
+                _settingsForm.SetStatus("已应用 · 热键 " + (_hotkeyHint.Length > 0 ? _hotkeyHint : "未启用")
+                    + " · 配置 " + (Settings.IsPortable ? "便携" : "漫游"));
         }
         #endregion
 
@@ -875,62 +964,13 @@ namespace FlatCat
             _menu.Items.Add(toggle);
             _menu.Items.Add(new ToolStripSeparator());
 
-            _menu.Items.Add(BuildScaleMenu());
-            _menu.Items.Add(BuildOpacityMenu());
-            _menu.Items.Add(BuildSleepMenu());
-            _menu.Items.Add(BuildCoatMenu());
-            _menu.Items.Add(BuildPomodoroMenu());
-            _menu.Items.Add(BuildWaterMenu());
-            _menu.Items.Add(BuildReminderMenu());
-            _menu.Items.Add(new ToolStripSeparator());
+            // 一级只留常用入口，外观与提醒收进二级
             _menu.Items.Add(BuildShotMenu());
             _menu.Items.Add(BuildRadioMenu());
             _menu.Items.Add(BuildMusicMenu());
-
-            ToolStripMenuItem kb = new ToolStripMenuItem("显示小键盘");
-            kb.Checked = _cfg.ShowKeyboard;
-            kb.Click += delegate
-            {
-                _cfg.ShowKeyboard = !_cfg.ShowKeyboard;
-                kb.Checked = _cfg.ShowKeyboard;
-                _cfg.Save();
-                RenderFrame();
-            };
-            _menu.Items.Add(kb);
-
-            ToolStripMenuItem lockThrough = new ToolStripMenuItem("锁定点击穿透");
-            lockThrough.Checked = _cfg.ClickThroughLocked;
-            lockThrough.Click += delegate
-            {
-                _cfg.ClickThroughLocked = !_cfg.ClickThroughLocked;
-                lockThrough.Checked = _cfg.ClickThroughLocked;
-                _cfg.Save();
-            };
-            _menu.Items.Add(lockThrough);
-
-            ToolStripMenuItem purr = new ToolStripMenuItem("呼噜声");
-            purr.Checked = _cfg.Purr;
-            purr.Click += delegate
-            {
-                _cfg.Purr = !_cfg.Purr;
-                purr.Checked = _cfg.Purr;
-                if (!_cfg.Purr) StopPurr();
-                _cfg.Save();
-            };
-            _menu.Items.Add(purr);
-
-            ToolStripMenuItem auto = new ToolStripMenuItem("开机自启");
-            auto.Checked = IsAutostartEnabled();
-            auto.Click += delegate
-            {
-                bool on = !IsAutostartEnabled();
-                SetAutostart(on);
-                auto.Checked = on;
-                _cfg.Autostart = on;
-                _cfg.Save();
-            };
-            _menu.Items.Add(auto);
-
+            _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(BuildLookMenu());
+            _menu.Items.Add(BuildCareMenu());
             _menu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem about = new ToolStripMenuItem("关于");
@@ -942,6 +982,73 @@ namespace FlatCat
             _menu.Items.Add(quit);
 
             ContextMenuStrip = _menu;
+        }
+
+        /// <summary>外观二级菜单：大小、不透明度、毛色、闲置睡眠、小键盘。</summary>
+        private ToolStripMenuItem BuildLookMenu()
+        {
+            ToolStripMenuItem root = new ToolStripMenuItem("外观");
+            root.DropDownItems.Add(BuildScaleMenu());
+            root.DropDownItems.Add(BuildOpacityMenu());
+            root.DropDownItems.Add(BuildCoatMenu());
+            root.DropDownItems.Add(BuildSleepMenu());
+
+            ToolStripMenuItem kb = new ToolStripMenuItem("显示小键盘");
+            kb.Checked = _cfg.ShowKeyboard;
+            kb.Click += delegate
+            {
+                _cfg.ShowKeyboard = !_cfg.ShowKeyboard;
+                kb.Checked = _cfg.ShowKeyboard;
+                _cfg.Save();
+                RenderFrame();
+            };
+            root.DropDownItems.Add(kb);
+            return root;
+        }
+
+        /// <summary>陪伴二级菜单：番茄钟、喝水、闹钟提醒、呼噜声、点击穿透、开机自启。</summary>
+        private ToolStripMenuItem BuildCareMenu()
+        {
+            ToolStripMenuItem root = new ToolStripMenuItem("陪伴与提醒");
+            root.DropDownItems.Add(BuildPomodoroMenu());
+            root.DropDownItems.Add(BuildWaterMenu());
+            root.DropDownItems.Add(BuildReminderMenu());
+            root.DropDownItems.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem purr = new ToolStripMenuItem("呼噜声");
+            purr.Checked = _cfg.Purr;
+            purr.Click += delegate
+            {
+                _cfg.Purr = !_cfg.Purr;
+                purr.Checked = _cfg.Purr;
+                if (!_cfg.Purr) StopPurr();
+                _cfg.Save();
+            };
+            root.DropDownItems.Add(purr);
+
+            ToolStripMenuItem lockThrough = new ToolStripMenuItem("锁定点击穿透");
+            lockThrough.Checked = _cfg.ClickThroughLocked;
+            lockThrough.Click += delegate
+            {
+                _cfg.ClickThroughLocked = !_cfg.ClickThroughLocked;
+                lockThrough.Checked = _cfg.ClickThroughLocked;
+                _cfg.Save();
+            };
+            root.DropDownItems.Add(lockThrough);
+
+            ToolStripMenuItem auto = new ToolStripMenuItem("开机自启");
+            auto.Checked = IsAutostartEnabled();
+            auto.Click += delegate
+            {
+                bool on = !IsAutostartEnabled();
+                SetAutostart(on);
+                auto.Checked = on;
+                _cfg.Autostart = on;
+                _cfg.Save();
+            };
+            root.DropDownItems.Add(auto);
+
+            return root;
         }
 
         #region 截图 / 电台 / 音乐

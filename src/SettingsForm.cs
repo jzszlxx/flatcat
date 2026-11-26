@@ -79,6 +79,13 @@ namespace FlatCat
         private Label _statLabel;
         private ListBox _historyList;
 
+        // v1.5 系统页：热键、静默时段、配置位置
+        private CheckBox _hotkeys;
+        private CheckBox _quiet;
+        private NumericUpDown _quietStart;
+        private NumericUpDown _quietEnd;
+        private Label _portableLabel;
+
         public event EventHandler StartCountdownRequested;
         public event EventHandler ShotFullRequested;
         public event EventHandler ShotRectRequested;
@@ -102,23 +109,35 @@ namespace FlatCat
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = true;
-            ClientSize = new Size(652, 548);
+            ClientSize = new Size(1180, 640);
             TopMost = true;
             Font = SystemFonts.MessageBoxFont;
             AutoScaleMode = AutoScaleMode.None;
+            BackColor = Color.FromArgb(247, 242, 234);
 
             BuildTabs();
+            BuildShell();
             BuildButtons();
             LoadValues();
         }
 
         private TabControl _tabs;
 
+        // v1.5 外壳：左导航 + 搜索 + 实时预览 + 状态栏
+        private TextBox _search;
+        private ListBox _nav;
+        private Panel _preview;
+        private Label _status;
+        private readonly List<int> _navMap = new List<int>();
+        private System.Windows.Forms.Timer _previewTimer;
+
         private void BuildTabs()
         {
             _tabs = new TabControl();
-            _tabs.SetBounds(12, 12, 628, 486);
-            _tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            // 隐藏标签头：页面切换交给左侧导航
+            _tabs.Appearance = TabAppearance.FlatButtons;
+            _tabs.ItemSize = new Size(1, 1);
+            _tabs.SizeMode = TabSizeMode.Fixed;
 
             _tabs.TabPages.Add(BuildAppearancePage());
             _tabs.TabPages.Add(BuildBehaviorPage());
@@ -126,8 +145,7 @@ namespace FlatCat
             _tabs.TabPages.Add(BuildSystemPage());
             _tabs.TabPages.Add(BuildCapturePage());
             _tabs.TabPages.Add(BuildMediaPage());
-
-            Controls.Add(_tabs);
+            // 布局与加入控件交给 BuildShell
         }
 
         // ---------------------------------------------------------------- 外观
@@ -510,7 +528,7 @@ namespace FlatCat
 
             Button openDir = new Button();
             openDir.Text = "打开所在文件夹";
-            openDir.SetBounds(112, 100, 132, 28);
+            openDir.SetBounds(112, 98, 132, 26);
             openDir.Click += delegate
             {
                 try { Process.Start("explorer.exe", "/select,\"" + Settings.FilePath + "\""); }
@@ -518,27 +536,70 @@ namespace FlatCat
             };
             page.Controls.Add(openDir);
 
-            _statLabel = NewLabel("", 20, 144);
-            _statLabel.SetBounds(20, 142, 560, 20);
+            // v1.5 全局热键
+            page.Controls.Add(NewLabel("全局热键", 20, 138));
+            _hotkeys = NewCheck("启用全局热键（Ctrl+Alt+S / R / L / P）", 20, 160, 460);
+            page.Controls.Add(_hotkeys);
+
+            Label hkTip = NewLabel("", 20, 186);
+            hkTip.SetBounds(20, 184, 620, 34);
+            hkTip.ForeColor = Color.DimGray;
+            hkTip.Text = "S 全屏 · R 矩形 · L 套索 · P 播放/暂停音乐；Ctrl+Alt 被占用时整组自动换 Ctrl+Shift+Alt。\r\n" +
+                         "程序只读全局按键的虚拟键码决定抬哪只爪，不记录字符、不写日志、不联网。";
+            page.Controls.Add(hkTip);
+
+            // v1.5 静默时段
+            page.Controls.Add(NewLabel("静默时段", 20, 226));
+            _quiet = NewCheck("启用（只静音，气泡与日志照旧）", 20, 248, 300);
+            page.Controls.Add(_quiet);
+
+            _quietStart = new NumericUpDown();
+            _quietStart.SetBounds(330, 246, 56, 24);
+            _quietStart.Minimum = 0;
+            _quietStart.Maximum = 23;
+            page.Controls.Add(_quietStart);
+
+            Label to = NewLabel("至", 392, 250);
+            page.Controls.Add(to);
+
+            _quietEnd = new NumericUpDown();
+            _quietEnd.SetBounds(414, 246, 56, 24);
+            _quietEnd.Minimum = 0;
+            _quietEnd.Maximum = 23;
+            page.Controls.Add(_quietEnd);
+
+            Label dot = NewLabel("点", 476, 250);
+            page.Controls.Add(dot);
+
+            // 便携模式状态
+            page.Controls.Add(NewLabel("配置位置", 20, 286));
+            _portableLabel = NewLabel("", 112, 286);
+            _portableLabel.SetBounds(112, 284, 470, 20);
+            page.Controls.Add(_portableLabel);
+
+            Button openCfg = new Button();
+            openCfg.Text = "打开配置目录";
+            openCfg.SetBounds(112, 310, 132, 26);
+            openCfg.Click += delegate
+            {
+                try { Process.Start("explorer.exe", "\"" + Settings.Dir + "\""); }
+                catch { }
+            };
+            page.Controls.Add(openCfg);
+
+            _statLabel = NewLabel("", 20, 348);
+            _statLabel.SetBounds(20, 346, 560, 20);
             page.Controls.Add(_statLabel);
 
-            Label ver = NewLabel("FlatCat 1.3 · .NET Framework 4.8 · 单文件约 150 KB", 20, 176);
-            ver.SetBounds(20, 174, 560, 20);
+            Label ver = NewLabel("FlatCat 1.5 · .NET Framework 4.8 · 单文件约 240 KB", 20, 374);
+            ver.SetBounds(20, 372, 560, 20);
             page.Controls.Add(ver);
 
-            page.Controls.Add(NewLabel("最近提醒", 20, 204));
+            page.Controls.Add(NewLabel("最近提醒", 20, 402));
             _historyList = new ListBox();
-            _historyList.SetBounds(20, 226, 570, 152);
+            _historyList.SetBounds(20, 424, 570, 116);
             _historyList.IntegralHeight = false;
             page.Controls.Add(_historyList);
-
-            Label note = NewLabel("", 20, 390);
-            note.SetBounds(20, 388, 570, 64);
-            note.ForeColor = Color.DimGray;
-            note.Text = "程序只读取全局按键的虚拟键码用于决定抬哪只爪，不记录字符内容、不写日志、不联网。\r\n" +
-                        "透明窗口带 WS_EX_NOACTIVATE，点猫不会抢走前台窗口的焦点。\r\n" +
-                        "双击猫或双击托盘图标都能直接打开这个设置窗口。";
-            page.Controls.Add(note);
 
             return page;
         }
@@ -780,23 +841,213 @@ namespace FlatCat
             if (_audioStatus != null) _audioStatus.Text = text;
         }
 
+        // ---------------------------------------------------------------- 外壳
+        private void BuildShell()
+        {
+            _search = new TextBox();
+            _search.SetBounds(12, 12, 166, 26);
+            _search.Text = "搜索设置…";
+            _search.ForeColor = Color.Gray;
+            _search.GotFocus += delegate
+            {
+                if (_search.ForeColor == Color.Gray)
+                {
+                    _search.Text = "";
+                    _search.ForeColor = Color.FromArgb(38, 34, 32);
+                }
+            };
+            _search.LostFocus += delegate
+            {
+                if (_search.Text.Trim().Length == 0)
+                {
+                    _search.Text = "搜索设置…";
+                    _search.ForeColor = Color.Gray;
+                }
+            };
+            _search.TextChanged += delegate { RebuildNav(); };
+            Controls.Add(_search);
+
+            _nav = new ListBox();
+            _nav.SetBounds(0, 46, 190, 556);
+            _nav.BorderStyle = BorderStyle.None;
+            _nav.DrawMode = DrawMode.OwnerDrawFixed;
+            _nav.ItemHeight = 42;
+            _nav.BackColor = Color.FromArgb(242, 235, 224);
+            _nav.Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 11f);
+            _nav.DrawItem += DrawNavItem;
+            _nav.SelectedIndexChanged += delegate { SyncPageFromNav(); };
+            Controls.Add(_nav);
+
+            _tabs.SetBounds(190, 12, 700, 580);
+            _tabs.SelectedIndexChanged += delegate { SyncNavFromPage(); };
+            Controls.Add(_tabs);
+
+            _preview = new Panel();
+            _preview.SetBounds(902, 12, 262, 262);
+            _preview.BackColor = Color.FromArgb(242, 235, 224);
+            _preview.Paint += delegate(object s, PaintEventArgs e) { PaintPreview(e.Graphics, _preview.ClientRectangle); };
+            Controls.Add(_preview);
+
+            Label pl = new Label();
+            pl.Text = "实时预览";
+            pl.SetBounds(902, 280, 120, 20);
+            pl.ForeColor = Color.FromArgb(124, 111, 96);
+            Controls.Add(pl);
+
+            Label tip = new Label();
+            tip.SetBounds(902, 302, 262, 140);
+            tip.ForeColor = Color.FromArgb(124, 111, 96);
+            tip.Text = "左侧切页，上方搜索框可直接过滤设置项。\r\n\r\n改毛色、配饰、大小、斑纹、异瞳时，\r\n这里会立刻跟着变。";
+            Controls.Add(tip);
+
+            _status = new Label();
+            _status.SetBounds(12, 606, 860, 22);
+            _status.ForeColor = Color.FromArgb(124, 111, 96);
+            Controls.Add(_status);
+
+            _previewTimer = new System.Windows.Forms.Timer();
+            _previewTimer.Interval = 220;
+            _previewTimer.Tick += delegate { if (_preview != null && !_preview.IsDisposed) _preview.Invalidate(); };
+            _previewTimer.Start();
+
+            FormClosed += delegate { if (_previewTimer != null) _previewTimer.Stop(); };
+
+            RebuildNav();
+        }
+
+        private void RebuildNav()
+        {
+            string kw = _search.ForeColor == Color.Gray ? "" : _search.Text.Trim();
+            int keep = _tabs.SelectedIndex;
+
+            _navMap.Clear();
+            _nav.BeginUpdate();
+            _nav.Items.Clear();
+            for (int i = 0; i < _tabs.TabPages.Count; i++)
+            {
+                string title = _tabs.TabPages[i].Text;
+                if (kw.Length > 0
+                    && title.IndexOf(kw, StringComparison.OrdinalIgnoreCase) < 0
+                    && !PageContains(i, kw)) continue;
+                _navMap.Add(i);
+                _nav.Items.Add(title);
+            }
+            _nav.EndUpdate();
+            if (_navMap.Count == 0) return;
+
+            int idx = _navMap.IndexOf(keep);
+            _nav.SelectedIndex = idx >= 0 ? idx : 0;
+        }
+
+        /// <summary>搜索兜底：页内控件的文字含关键词也算命中。</summary>
+        private bool PageContains(int pageIndex, string kw)
+        {
+            return ContainsText(_tabs.TabPages[pageIndex].Controls, kw);
+        }
+
+        private static bool ContainsText(Control.ControlCollection controls, string kw)
+        {
+            foreach (Control c in controls)
+            {
+                string t = c.Text;
+                if (!string.IsNullOrEmpty(t) && t.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (c.Controls.Count > 0 && ContainsText(c.Controls, kw)) return true;
+            }
+            return false;
+        }
+
+        private void DrawNavItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0) return;
+            bool sel = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            using (SolidBrush b = new SolidBrush(sel ? Color.FromArgb(255, 252, 246) : Color.FromArgb(242, 235, 224)))
+                e.Graphics.FillRectangle(b, e.Bounds);
+            if (sel)
+            {
+                using (SolidBrush accent = new SolidBrush(Color.FromArgb(196, 86, 63)))
+                    e.Graphics.FillRectangle(accent, e.Bounds.X, e.Bounds.Y + 7, 3, e.Bounds.Height - 14);
+            }
+            TextRenderer.DrawText(e.Graphics, (string)_nav.Items[e.Index], _nav.Font,
+                new Rectangle(e.Bounds.X + 18, e.Bounds.Y, e.Bounds.Width - 24, e.Bounds.Height),
+                Color.FromArgb(38, 34, 32),
+                TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+
+        private void SyncPageFromNav()
+        {
+            if (_nav.SelectedIndex < 0 || _nav.SelectedIndex >= _navMap.Count) return;
+            int page = _navMap[_nav.SelectedIndex];
+            if (_tabs.SelectedIndex != page) _tabs.SelectedIndex = page;
+        }
+
+        private void SyncNavFromPage()
+        {
+            int idx = _navMap.IndexOf(_tabs.SelectedIndex);
+            if (idx >= 0 && _nav.SelectedIndex != idx) _nav.SelectedIndex = idx;
+        }
+
+        private void PaintPreview(Graphics g, Rectangle r)
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (SolidBrush bg = new SolidBrush(Color.FromArgb(247, 242, 234)))
+                g.FillRectangle(bg, r);
+            using (Pen border = new Pen(Color.FromArgb(214, 202, 184)))
+                g.DrawRectangle(border, 0, 0, r.Width - 1, r.Height - 1);
+
+            int coat = _coatBox == null ? 0 : Math.Max(0, _coatBox.SelectedIndex);
+            int acc = _accessoryBox == null ? 0 : Math.Max(0, _accessoryBox.SelectedIndex);
+            bool spots = _showSpots == null || _showSpots.Checked;
+            bool hetero = _hetero != null && _hetero.Checked;
+
+            float scale = (r.Width - 8f) / 320f;
+            System.Drawing.Drawing2D.GraphicsState st = g.Save();
+            g.TranslateTransform(4f, (r.Height - 320f * scale) / 2f);
+            g.ScaleTransform(scale, scale);
+
+            CatAnim a = CatAnim.ForState("idle");
+            a.Breathe = 0.55f;
+            a.TailAngle = 5f;
+            CatPainter.Draw(g, a, false, Coats.ById(coat), acc, spots, hetero);
+            g.Restore(st);
+        }
+
+        /// <summary>左导航当前列出的页数（搜索过滤后），供自检读取。</summary>
+        public int NavCount { get { return _nav == null ? 0 : _nav.Items.Count; } }
+
+        public string[] NavTitles
+        {
+            get
+            {
+                if (_nav == null) return new string[0];
+                string[] arr = new string[_nav.Items.Count];
+                for (int i = 0; i < _nav.Items.Count; i++) arr[i] = _nav.Items[i].ToString();
+                return arr;
+            }
+        }
+
+        /// <summary>底部状态栏文案。</summary>
+        public void SetStatus(string text)
+        {
+            if (_status != null) _status.Text = text;
+        }
+
         private void BuildButtons()
         {
             Button ok = new Button();
             ok.Text = "确定";
-            ok.SetBounds(436, 508, 84, 30);
+            ok.SetBounds(992, 600, 84, 30);
             ok.Click += delegate { Collect(); Apply(); Close(); };
             Controls.Add(ok);
 
             Button cancel = new Button();
             cancel.Text = "取消";
-            cancel.SetBounds(528, 508, 84, 30);
+            cancel.SetBounds(1084, 600, 84, 30);
             cancel.Click += delegate { Close(); };
             Controls.Add(cancel);
 
             Button apply = new Button();
             apply.Text = "应用";
-            apply.SetBounds(336, 508, 84, 30);
+            apply.SetBounds(900, 600, 84, 30);
             apply.Click += delegate { Collect(); Apply(); };
             Controls.Add(apply);
         }
@@ -817,8 +1068,8 @@ namespace FlatCat
             // 按内容估算宽度：固定 120 会把右边的输入框盖住（Label 会画自家背景色）
             int w = 0;
             for (int i = 0; i < text.Length; i++)
-                w += (text[i] < 128) ? 8 : 15;
-            l.SetBounds(x, y, Math.Max(20, w + 8), 20);
+                w += (text[i] < 128) ? 8 : 17;
+            l.SetBounds(x, y, Math.Max(20, w + 12), 20);
             return l;
         }
 
@@ -874,6 +1125,14 @@ namespace FlatCat
 
             _alarmSound.SelectedIndex = Math.Max(0, Math.Min(2, _work.AlarmSound));
             _autostart.Checked = _work.Autostart;
+
+            _hotkeys.Checked = _work.Hotkeys;
+            _quiet.Checked = _work.QuietEnabled;
+            _quietStart.Value = Math.Max(0, Math.Min(23, _work.QuietStart));
+            _quietEnd.Value = Math.Max(0, Math.Min(23, _work.QuietEnd));
+            _portableLabel.Text = Settings.IsPortable
+                ? "便携模式：exe 旁 data\\settings.json"
+                : "漫游模式：%APPDATA%\\FlatCat\\settings.json";
 
             _captureHideCat.Checked = _work.CaptureHideCat;
             _captureCopy.Checked = _work.CaptureCopy;
@@ -1019,6 +1278,10 @@ namespace FlatCat
             _work.AlarmSound = Math.Max(0, _alarmSound.SelectedIndex);
 
             _work.Autostart = _autostart.Checked;
+            _work.Hotkeys = _hotkeys.Checked;
+            _work.QuietEnabled = _quiet.Checked;
+            _work.QuietStart = (int)_quietStart.Value;
+            _work.QuietEnd = (int)_quietEnd.Value;
 
             _work.CaptureHideCat = _captureHideCat.Checked;
             _work.CaptureCopy = _captureCopy.Checked;

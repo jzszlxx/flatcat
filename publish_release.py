@@ -17,15 +17,24 @@ import urllib.request
 API = "https://api.github.com"
 UPLOAD = "https://uploads.github.com"
 DEFAULT_REPO = "jzszlxx/-"
-DEFAULT_TAG = "v1.4.0"
-TITLE = "FlatCat 1.4 · 截图 + 电台/本地音乐"
-ASSETS = ["out/FlatCat.exe", "out/FlatCat-1.4.zip"]
+DEFAULT_TAG = "v1.5.0"
+TITLE = "FlatCat 1.5 · 动画内核 + 设置窗口换壳"
+ASSETS = ["out/FlatCat.exe", "out/FlatCat-1.5.zip"]
 
-BODY = """## FlatCat 1.4
+BODY = """## FlatCat 1.5
 
 一只会跟着你敲键盘抬爪的 2D 桌面宠物。透明置顶、点击穿透、不抢焦点，双击就能跑，不装运行时。
 
 ### 这一版新增
+
+- **动画内核换成关键帧**：`src/Anim.cs` 里 16 段动作片段（呼吸、睡着、摸头、提醒、专注、舔爪、歪头、打字、惊醒、开心、落地、打哈欠、整点抖动、被拖走），4 种缓动曲线带轻微过冲；基础循环层 + 一次性动作层叠加，动作播完自动回落，不再是一堆互相打架的阈值判断
+- **有表情了**：参数从 12 个扩到 23 个，新增笑眼、瞪眼、眉毛、微笑、张嘴、吐舌、腮红、耳朵转向、头部左右转、压扁回弹、身体前倾。摸头是笑眼 + 腮红 + 头蹭，提醒是瞪眼 + 张嘴 + 耳朵前竖，打哈欠会吐舌，拖起来瞪眼 + 尾巴耷拉，放下有压扁回弹
+- **设置窗口换壳**：左导航 + 右内容 + 实时预览三栏；顶部搜索框按页名或页内控件文字过滤（输入「铃」能同时留下铃声和呼噜声）；底部状态栏；托盘菜单从 21 项平铺收到 9 项一级 + 二级分组
+- **全局热键**：`Ctrl+Alt+S/R/L/P`（全屏截图 / 矩形 / 套索 / 播放暂停）。被占用时整组自动降到 `Ctrl+Shift+Alt`，不会只抢到一半导致按下去行为不一致
+- **便携模式**：exe 旁放一个 `flatcat.portable` 空文件，配置改存 `exe\data\settings.json`，不碰用户漫游目录
+- **静默时段**：默认关、22 点到 8 点，支持跨午夜。到点只静音，气泡和「最近提醒」日志照旧写，不吞提醒
+
+### 1.4 已有
 
 - **截图**：全屏 / 矩形选区 / 不规则套索三种。可以勾选「截图时隐藏小猫」，截之前先把自己藏起来，图里就没有它
 - 截图存 PNG，文件名带时间戳不覆盖旧图，同时复制进剪贴板；默认放在 `图片\\FlatCat 截图`
@@ -35,18 +44,23 @@ BODY = """## FlatCat 1.4
 
 ### 修复
 
-- 老配置文件缺少 v1.4 字段时，音量等设置会读成 0：加了 `v14init` 一次性迁移，补回出厂默认
+- `Settings.Save()` 没打 `v14init` / `v15init` 标记，导致老配置每次加载都把新增字段当「老配置」再覆盖一遍（1.4 的音量也受此影响）：保存前先打标记
+- 热键注册只记成功项、失败时没有可见提示：改为整组降级到 `Ctrl+Shift+Alt`，状态栏显示当前实际组合
+- 设置页标签宽度按字符估算偏小，「配置文件」「全局热键」末字被裁：中文按 17px + 12px 余量重算
 
 ### 已知限制
 
 - 内置播放器只认 `http://` 流；`https://` 流在部分机器上会让 MediaPlayer 内部抛错，这类地址请用系统播放器
 - 截图在锁屏、纯远程桌面等非交互会话里会是黑图，属系统限制
 - 电台流来自第三方，可能失效；可在「媒体」页删除或换源
+- 全局热键可能和常驻软件冲突：`Ctrl+Alt` 被占时整组退到 `Ctrl+Shift+Alt`；两套都被占则只注册到哪几个算几个，可在系统页整体关掉
+- 便携模式靠 exe 同目录的 `flatcat.portable` 判定，放了 / 删了都要**重启程序**才切换配置目录
+- 静默时段只静音，不拦气泡和「最近提醒」记录
 
 ### 下载
 
-- `FlatCat.exe`（约 217 KB，免安装，双击即用）
-- `FlatCat-1.4.zip`（含 exe、源码、构建脚本、取证脚本）
+- `FlatCat.exe`（约 240 KB，免安装，双击即用）
+- `FlatCat-1.5.zip`（含 exe、源码、构建脚本、取证脚本）
 
 MIT License · © 2026 认知觉醒能量站"""
 
@@ -55,6 +69,8 @@ def req(url, token, method="GET", body=None, ctype="application/json", raw=None)
     if not url.startswith("http"):
         url = API + url
     data = raw
+    if data is None and body is not None:
+        data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
     r = urllib.request.Request(url, method=method, data=data)
     r.add_header("Accept", "application/vnd.github+json")
     r.add_header("Authorization", "Bearer " + token)
