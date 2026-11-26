@@ -125,6 +125,9 @@ namespace FlatCat
 
         // v1.5 外壳：左导航 + 搜索 + 实时预览 + 状态栏
         private TextBox _search;
+        /// <summary>搜索框是否处于“用户正在搜”的状态：占位符不参与过滤。</summary>
+        private bool _searchActive;
+        private const string SearchPlaceholder = "搜索设置…";
         private ListBox _nav;
         private Panel _preview;
         private Label _status;
@@ -591,7 +594,7 @@ namespace FlatCat
             _statLabel.SetBounds(20, 346, 560, 20);
             page.Controls.Add(_statLabel);
 
-            Label ver = NewLabel("FlatCat 1.5 · .NET Framework 4.8 · 单文件约 240 KB", 20, 374);
+            Label ver = NewLabel("FlatCat 1.5.1 · .NET Framework 4.8 · 单文件约 248 KB", 20, 374);
             ver.SetBounds(20, 372, 560, 20);
             page.Controls.Add(ver);
 
@@ -846,24 +849,10 @@ namespace FlatCat
         {
             _search = new TextBox();
             _search.SetBounds(12, 12, 166, 26);
-            _search.Text = "搜索设置…";
+            _search.Text = SearchPlaceholder;
             _search.ForeColor = Color.Gray;
-            _search.GotFocus += delegate
-            {
-                if (_search.ForeColor == Color.Gray)
-                {
-                    _search.Text = "";
-                    _search.ForeColor = Color.FromArgb(38, 34, 32);
-                }
-            };
-            _search.LostFocus += delegate
-            {
-                if (_search.Text.Trim().Length == 0)
-                {
-                    _search.Text = "搜索设置…";
-                    _search.ForeColor = Color.Gray;
-                }
-            };
+            _search.GotFocus += delegate { EnterSearch(); };
+            _search.LostFocus += delegate { LeaveSearch(); };
             _search.TextChanged += delegate { RebuildNav(); };
             Controls.Add(_search);
 
@@ -917,7 +906,7 @@ namespace FlatCat
 
         private void RebuildNav()
         {
-            string kw = _search.ForeColor == Color.Gray ? "" : _search.Text.Trim();
+            string kw = Keyword();
             int keep = _tabs.SelectedIndex;
 
             _navMap.Clear();
@@ -932,11 +921,69 @@ namespace FlatCat
                 _navMap.Add(i);
                 _nav.Items.Add(title);
             }
+            // 关键词一个都没命中时不要把导航清空：清空后左栏空白、用户点哪儿都没反应
+            if (_navMap.Count == 0 && kw.Length > 0)
+            {
+                for (int i = 0; i < _tabs.TabPages.Count; i++)
+                {
+                    _navMap.Add(i);
+                    _nav.Items.Add(_tabs.TabPages[i].Text);
+                }
+                SetStatus("没有匹配「" + kw + "」的项，已显示全部页");
+            }
             _nav.EndUpdate();
             if (_navMap.Count == 0) return;
 
             int idx = _navMap.IndexOf(keep);
             _nav.SelectedIndex = idx >= 0 ? idx : 0;
+        }
+
+        /// <summary>真正用于过滤的关键词：占位符不算，只有用户主动输入过才算。</summary>
+        private string Keyword()
+        {
+            if (!_searchActive || _search == null) return "";
+            string t = _search.Text.Trim();
+            if (t.Length == 0 || t == SearchPlaceholder) return "";
+            return t;
+        }
+
+        private void EnterSearch()
+        {
+            _searchActive = true;
+            if (_search.ForeColor != Color.Gray) return;
+            // 先改颜色再清空：反过来的话 TextChanged 会带着占位符跑一次过滤
+            _search.ForeColor = Color.FromArgb(38, 34, 32);
+            _search.Text = "";
+        }
+
+        private void LeaveSearch()
+        {
+            if (_search == null) return;
+            bool empty = _search.Text.Trim().Length == 0 || _search.Text == SearchPlaceholder;
+            // 关键：先把 active 关掉，再回填占位符。否则 TextChanged 触发的 RebuildNav
+            // 会把「搜索设置…」当成关键词，6 个页名全不匹配，导航被清成空列表。
+            _searchActive = !empty;
+            if (empty && (_search.Text != SearchPlaceholder || _search.ForeColor != Color.Gray))
+            {
+                _search.Text = SearchPlaceholder;
+                _search.ForeColor = Color.Gray;
+            }
+            RebuildNav();
+        }
+
+        /// <summary>自检用：模拟在搜索框里输入关键词。</summary>
+        public void SearchForTest(string text)
+        {
+            _searchActive = !string.IsNullOrEmpty(text);
+            if (_search != null) _search.Text = text;
+            RebuildNav();
+        }
+
+        /// <summary>自检用：模拟搜索框失焦并清空（走真实回填路径）。</summary>
+        public void ClearSearchForTest()
+        {
+            if (_search != null) _search.Text = "";
+            LeaveSearch();
         }
 
         /// <summary>搜索兜底：页内控件的文字含关键词也算命中。</summary>
@@ -1022,6 +1069,26 @@ namespace FlatCat
                 string[] arr = new string[_nav.Items.Count];
                 for (int i = 0; i < _nav.Items.Count; i++) arr[i] = _nav.Items[i].ToString();
                 return arr;
+            }
+        }
+
+        /// <summary>模拟点击左侧导航第 i 项（自检用，等价于用户点了一下）。</summary>
+        public void SelectNav(int i)
+        {
+            if (_nav == null || i < 0 || i >= _nav.Items.Count) return;
+            _nav.SelectedIndex = i;
+        }
+
+        /// <summary>当前 TabControl 选中的页号，-1 表示没有页。</summary>
+        public int CurrentPage { get { return _tabs == null ? -1 : _tabs.SelectedIndex; } }
+
+        /// <summary>当前页里的控件数量：为 0 说明内容区真是空的（不按 Visible 判断，窗体没 Show 时 Visible 会沿父链为 false）。</summary>
+        public int ControlCountOnCurrentPage
+        {
+            get
+            {
+                if (_tabs == null || _tabs.SelectedIndex < 0) return 0;
+                return _tabs.TabPages[_tabs.SelectedIndex].Controls.Count;
             }
         }
 

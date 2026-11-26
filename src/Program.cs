@@ -384,14 +384,46 @@ namespace FlatCat
                 int navCount = probeForm.NavCount;
                 string navTitles = string.Join("/", probeForm.NavTitles);
                 lines.Add("ui.client = " + probeForm.ClientSize.Width + "x" + probeForm.ClientSize.Height);
-                probeForm.Dispose();
-                lines.Add("settings.form_build = " + (ctrlCount > 0 ? "PASS" : "FAIL")
-                          + " (controls=" + ctrlCount + ")");
-                if (ctrlCount <= 0) fails++;
                 // v1.5 UI 壳：左导航要列出 6 个页签，空壳等于没做
                 bool navOk = navCount == 6;
                 lines.Add("ui.nav_items = " + (navOk ? "PASS" : "FAIL") + " (" + navCount + " " + navTitles + ")");
                 if (!navOk) fails++;
+
+                // 逐项点击导航，检查内容区是否真的跟着换页、并且不是空的
+                bool navSwitch = true;
+                string navLog = "";
+                for (int i = 0; i < navCount; i++)
+                {
+                    probeForm.SelectNav(i);
+                    int page = probeForm.CurrentPage;
+                    int vis = probeForm.ControlCountOnCurrentPage;
+                    navLog += i + "->" + page + "/" + vis + " ";
+                    if (page != i || vis <= 0) navSwitch = false;
+                }
+                lines.Add("ui.nav_switch = " + (navSwitch ? "PASS" : "FAIL") + " (" + navLog.Trim() + ")");
+                if (!navSwitch) fails++;
+                probeForm.Dispose();
+
+                // 回归：搜索框清空后导航不能被占位符文本过滤成空列表（1.5.0 的 P0 缺陷）
+                int navAfterSearch = 0;
+                string navSearchLog = "";
+                try
+                {
+                    SettingsForm sf = new SettingsForm(new Settings(), null);
+                    sf.SearchForTest("铃");
+                    int hit = sf.NavCount;
+                    sf.ClearSearchForTest();
+                    navAfterSearch = sf.NavCount;
+                    navSearchLog = "过滤后=" + hit + " 清空后=" + navAfterSearch;
+                    sf.Dispose();
+                }
+                catch (Exception ex) { navSearchLog = ex.GetType().Name; }
+                bool navSearchOk = navAfterSearch == 6;
+                lines.Add("ui.nav_after_search = " + (navSearchOk ? "PASS" : "FAIL") + " (" + navSearchLog + ")");
+                if (!navSearchOk) fails++;
+                lines.Add("settings.form_build = " + (ctrlCount > 0 ? "PASS" : "FAIL")
+                          + " (controls=" + ctrlCount + ")");
+                if (ctrlCount <= 0) fails++;
             }
             catch (Exception ex)
             {
